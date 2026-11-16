@@ -169,23 +169,31 @@ cd meat_grinder
 ```
 # Install System Dependencies & Go Tools
 Ensure Python 3, pip, and golang are installed, then compile the required reconnaissance binaries.
-````
+
 # Install OS-level dependencies
+
+```
 sudo apt update
 sudo apt install python3-pip python3-venv golang-go curl wget -y
+```
 
 # Install Go-based reconnaissance tools
+```
 go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
 go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
 go install -v github.com/zricethezav/gitleaks/v8@latest
 go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+```
 
 # Move binaries to global PATH and set execute permissions
+```
 sudo cp $(go env GOPATH)/bin/{subfinder,httpx,naabu,gitleaks,nuclei} /usr/local/bin/
 sudo chmod +x /usr/local/bin/{subfinder,httpx,naabu,gitleaks,nuclei}
+```
 
 # Initialize Nuclei templates (Critical: bypasses GitHub API rate limits)
+```
 rm -rf ~/.local/nuclei-templates
 wget -qO /tmp/nuclei-templates.tar.gz https://github.com/projectdiscovery/nuclei-templates/archive/refs/heads/main.zip
 unzip -q /tmp/nuclei-templates.tar.gz -d /tmp/ 2>/dev/null || tar -xzf /tmp/nuclei-templates.tar.gz -C /tmp/
