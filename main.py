@@ -13,6 +13,7 @@ from engine.git_scanner import GitScanner
 from engine.insight_filter import InsightFilter
 from reporting.markdown_gen import MarkdownReporter
 from engine.nuclei_scanner import NucleiScanner
+from engine.screenshotter import Screenshotter
 
 def main():
     parser = argparse.ArgumentParser(description="MEAT-GRINDER: Advanced OSINT Engine")
@@ -52,6 +53,7 @@ def main():
         GitScanner(target, db, workspace, github_target=args.github_target).execute()
 
     InsightFilter(target, db, workspace).execute()
+    Screenshotter(target, db, workspace).execute()
     MarkdownReporter(db, target, workspace).generate()
 
     print("\n[!] Engine run complete.")

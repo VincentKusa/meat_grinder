@@ -16,3 +16,4 @@ class Config:
     NAABU_BIN = "naabu"
     GITLEAKS_BIN = "gitleaks"
     NUCLEI_BIN = "nuclei"
+    GOWITNESS_BIN = "gowitness"

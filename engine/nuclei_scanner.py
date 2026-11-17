@@ -6,18 +6,17 @@ from config import Config
 
 
 class NucleiScanner(BaseReconModule):
-    # High-signal, low-noise template directory paths (verified for Nuclei v3.11.1)
-    TARGET_TEMPLATES = [
-        "http/exposed-panels/",
-        "http/misconfiguration/",
-        "http/default-logins/",
-        "http/technologies/"
+    # Use tags, which Nuclei v3 resolves internally to the correct directories
+    TARGET_TAGS = [
+        "exposed-panels",
+        "misconfiguration",
+        "default-logins",
+        "technologies"
     ]
 
     def execute(self):
         print("[*] Running High-Signal Nuclei Scan (Panels, Misconfigs, Default Logins)...")
 
-        # Get live HTTP endpoints from DB
         endpoints = self.db.get_all_endpoints()
         live_urls = [ep['url'] for ep in endpoints if ep['status_code'] > 0]
 
@@ -29,10 +28,10 @@ class NucleiScanner(BaseReconModule):
         with open(urls_file, 'w') as f:
             f.write('\n'.join(live_urls))
 
-        # Build the nuclei command using the verified directory paths
-        template_paths = ",".join(self.TARGET_TEMPLATES)
-        cmd = (f"{Config.NUCLEI_BIN} -l {urls_file} -json -silent "
-               f"-severity critical,high,medium -t {template_paths} "
+        # Use -tags for robust internal path resolution
+        tag_list = ",".join(self.TARGET_TAGS)
+        cmd = (f"{Config.NUCLEI_BIN} -l '{urls_file}' -jsonl -silent "
+               f"-severity critical,high,medium -tags {tag_list} "
                f"-timeout 10 -retries 1")
 
         try:
@@ -43,6 +42,7 @@ class NucleiScanner(BaseReconModule):
             out = result.stdout
         except subprocess.CalledProcessError as e:
             print(f"[!] Nuclei command failed with exit code {e.returncode}")
+            print(f"[!] STDOUT: {e.stdout}")
             print(f"[!] STDERR: {e.stderr}")
             return
         except subprocess.TimeoutExpired:
@@ -60,13 +60,7 @@ class NucleiScanner(BaseReconModule):
                     description = data.get('info', {}).get('name', 'No description')
 
                     details = f"[{template_id}] {description}"
-
-                    self.db.insert_finding(
-                        f_type="NUCLEI_VULN/MISCONFIG",
-                        url=url,
-                        details=details,
-                        severity=severity
-                    )
+                    self.db.insert_finding(f_type="NUCLEI_VULN/MISCONFIG", url=url, details=details, severity=severity)
                     findings_count += 1
                 except json.JSONDecodeError:
                     continue

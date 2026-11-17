@@ -80,4 +80,18 @@ class MarkdownReporter:
                         f.write(f"- **[{fd['finding_type']}]** `{fd['url']}`\n")
                         f.write(f"  - *Details:* {fd['details']}\n\n")
 
+            # ============ VISUAL PROOF (SCREENSHOTS) ============
+            screenshot_dir = self.workspace / "screenshots"
+            if screenshot_dir.exists() and any(screenshot_dir.iterdir()):
+                f.write("## 📸 Visual Proof (Screenshots)\n\n")
+                f.write("The following screenshots were captured for HIGH/CRITICAL findings:\n\n")
+
+                # Get all png files
+                screenshots = list(screenshot_dir.glob("*.png"))
+                for i, img_path in enumerate(screenshots[:10]):  # Limit to 10 to avoid massive reports
+                    # Use relative path for Markdown
+                    rel_path = f"screenshots/{img_path.name}"
+                    f.write(f"### Finding {i + 1}\n")
+                    f.write(f"![Screenshot {i + 1}]({rel_path})\n\n")
+
         print(f"[+] Report generated: {report_path}")
