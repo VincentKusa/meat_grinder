@@ -1,7 +1,8 @@
 import subprocess
 from pathlib import Path
-from engine.base import BaseReconModule
+
 from config import Config
+from engine.base import BaseReconModule
 
 
 class Screenshotter(BaseReconModule):
@@ -12,10 +13,10 @@ class Screenshotter(BaseReconModule):
         findings = self.db.get_all_findings()
         target_urls = set()
         for f in findings:
-            if f['severity'] in ['CRITICAL', 'HIGH']:
+            if f["severity"] in ["CRITICAL", "HIGH"]:
                 # Extract the base URL from the finding URL
-                url = f['url'].split(' -> ')[0]  # Handle JS file findings
-                if url.startswith('http'):
+                url = f["url"].split(" -> ")[0]  # Handle JS file findings
+                if url.startswith("http"):
                     target_urls.add(url)
 
         if not target_urls:
@@ -26,12 +27,14 @@ class Screenshotter(BaseReconModule):
         screenshot_dir.mkdir(exist_ok=True)
 
         targets_file = self.workspace / "screenshot_targets.txt"
-        with open(targets_file, 'w') as f:
-            f.write('\n'.join(target_urls))
+        with open(targets_file, "w") as f:
+            f.write("\n".join(target_urls))
 
         # Run gowitness
-        cmd = (f"{Config.GOWITNESS_BIN} file -f '{targets_file}' "
-               f"--destination '{screenshot_dir}' --threads 5 --timeout 10")
+        cmd = (
+            f"{Config.GOWITNESS_BIN} file -f '{targets_file}' "
+            f"--destination '{screenshot_dir}' --threads 5 --timeout 10"
+        )
 
         try:
             subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True, timeout=300)
@@ -47,8 +50,8 @@ class Screenshotter(BaseReconModule):
         """Updates findings in DB with the path to their screenshot"""
         findings = self.db.get_all_findings()
         for f in findings:
-            if f['severity'] in ['CRITICAL', 'HIGH']:
-                url = f['url'].split(' -> ')[0]
+            if f["severity"] in ["CRITICAL", "HIGH"]:
+                url = f["url"].split(" -> ")[0]
                 # Gowitness names files based on the URL (simplified matching)
                 # We'll just update the finding details to note a screenshot exists
                 # In a production app, you'd map the exact filename.
@@ -56,3 +59,5 @@ class Screenshotter(BaseReconModule):
                 new_details = f"{f['details']} | 📸 Screenshot: ./screenshots/"
                 # We can't easily update SQLite without an UPDATE method,
                 # so we'll just append to the report generator instead.
+                print(new_details)
+                print(url)

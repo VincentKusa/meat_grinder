@@ -1,7 +1,9 @@
 import json
-from pathlib import Path
-from database import DatabaseManager
 from datetime import datetime
+from pathlib import Path
+
+from database import DatabaseManager
+
 
 class MarkdownReporter:
     def __init__(self, db: DatabaseManager, target: str, workspace: Path):
@@ -15,17 +17,17 @@ class MarkdownReporter:
         endpoints = self.db.get_all_endpoints()
         report_path = self.workspace / f"REPORT_{self.target}.md"
 
-        with open(report_path, 'w', encoding='utf-8') as f:
+        with open(report_path, "w", encoding="utf-8") as f:
             f.write(f"# OSINT Insight Report: {self.target}\n")
             f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
-            f.write(f"## Executive Summary\n")
+            f.write("## Executive Summary\n")
             f.write(f"- **Actionable Findings:** {len(findings)}\n")
             f.write(f"- **Hosts with Open Ports:** {len(ports)}\n")
             f.write(f"- **Live HTTP Endpoints:** {len(endpoints)}\n\n")
 
             # ============ WAF & SECURITY POSTURE ============
-            waf_endpoints = [ep for ep in endpoints if ep.get('waf_detected') and ep['waf_detected'] != 'None']
+            waf_endpoints = [ep for ep in endpoints if ep.get("waf_detected") and ep["waf_detected"] != "None"]
             if waf_endpoints:
                 f.write("## 🛡️ WAF & Firewall Detection\n\n")
                 f.write("| Endpoint | Detected WAF/Firewall |\n")
@@ -41,12 +43,12 @@ class MarkdownReporter:
                 f.write("| Host | IP | OS | Open Ports | Running Services |\n")
                 f.write("|---|---|---|---|---|\n")
                 for p in ports:
-                    os_info = p.get('os', '') or 'Unknown'
+                    os_info = p.get("os", "") or "Unknown"
                     try:
-                        services = json.loads(p.get('services', '{}') or '{}')
+                        services = json.loads(p.get("services", "{}") or "{}")
                     except json.JSONDecodeError:
                         services = {}
-                    svc_list = [f"{port}({name})" for port, name in services.items() if port != 'cpe']
+                    svc_list = [f"{port}({name})" for port, name in services.items() if port != "cpe"]
                     svc_str = ", ".join(svc_list) if svc_list else "-"
                     f.write(f"| `{p['host']}` | {p['ip']} | {os_info} | {p['ports']} | {svc_str} |\n")
                 f.write("\n")
@@ -54,7 +56,7 @@ class MarkdownReporter:
             # ============ WEBSERVER INVENTORY ============
             webservers = {}
             for ep in endpoints:
-                ws = ep.get('webserver', '')
+                ws = ep.get("webserver", "")
                 if ws:
                     webservers[ws] = webservers.get(ws, 0) + 1
 
@@ -65,20 +67,6 @@ class MarkdownReporter:
                 for ws, count in sorted(webservers.items(), key=lambda x: -x[1]):
                     f.write(f"| `{ws}` | {count} |\n")
                 f.write("\n")
-
-            # ============ FINDINGS ============
-            if not findings:
-                f.write("*No high-value insights found.*\n")
-                return
-
-            f.write("## Detailed Findings\n\n")
-            for severity in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
-                sev_findings = [fd for fd in findings if fd['severity'] == severity]
-                if sev_findings:
-                    f.write(f"### {severity} Severity ({len(sev_findings)})\n\n")
-                    for fd in sev_findings:
-                        f.write(f"- **[{fd['finding_type']}]** `{fd['url']}`\n")
-                        f.write(f"  - *Details:* {fd['details']}\n\n")
 
             # ============ VISUAL PROOF (SCREENSHOTS) ============
             screenshot_dir = self.workspace / "screenshots"
@@ -93,5 +81,50 @@ class MarkdownReporter:
                     rel_path = f"screenshots/{img_path.name}"
                     f.write(f"### Finding {i + 1}\n")
                     f.write(f"![Screenshot {i + 1}]({rel_path})\n\n")
+
+            # ============ OS RECONNAISSANCE ============
+            os_data = self.db.get_all_os_recon()
+            if os_data:
+                f.write("## 🖥️ Deep OS & Service Fingerprinting\n\n")
+                f.write("| Host | IP | Detected OS (Accuracy) | Hostname | Open Ports & Versions |\n")
+                f.write("|---|---|---|---|---|\n")
+                for os_info in os_data:
+                    os_display = (
+                        f"{os_info['os_name']} ({os_info['os_accuracy']}%)"
+                        if os_info["os_name"] != "Unknown"
+                        else "Unknown"
+                    )
+                    f.write(
+                        f"| `{os_info['host']}` | {os_info['ip']} | {os_display} | {os_info['hostname']} "
+                        f"| {os_info['open_ports']} |\n"
+                    )
+                f.write("\n")
+
+            # ============ HUMAN INTELLIGENCE (WHOIS/CONTACTS) ============
+            human_findings = [
+                f
+                for f in findings
+                if f["finding_type"] in ["SOCIAL_MEDIA_CONTACT", "WHOIS_CONTACT_EMAIL", "DOMAIN_WHOIS_INFO"]
+            ]
+            if human_findings:
+                f.write("## 👤 Human Intelligence & Contact OSINT\n\n")
+                for fd in human_findings:
+                    f.write(f"- **[{fd['finding_type']}]** `{fd['url']}`\n")
+                    f.write(f"  - *Details:* {fd['details']}\n\n")
+                f.write("---\n\n")
+
+            # ============ FINDINGS ============
+            if not findings:
+                f.write("*No high-value insights found.*\n")
+                return
+
+            f.write("## Detailed Findings\n\n")
+            for severity in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
+                sev_findings = [fd for fd in findings if fd["severity"] == severity]
+                if sev_findings:
+                    f.write(f"### {severity} Severity ({len(sev_findings)})\n\n")
+                    for fd in sev_findings:
+                        f.write(f"- **[{fd['finding_type']}]** `{fd['url']}`\n")
+                        f.write(f"  - *Details:* {fd['details']}\n\n")
 
         print(f"[+] Report generated: {report_path}")

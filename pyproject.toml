@@ -1,0 +1,76 @@
+[project]
+name = "meat-grinder"
+version = "1.0.0"
+description = "Modular Engine for Asset Tracking & Reconnaissance"
+requires-python = ">=3.10"
+
+# ==========================================
+# Black - Code Formatter (PEP 8 compliant)
+# ==========================================
+[tool.black]
+line-length = 120
+target-version = ['py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    \.git
+  | \.venv
+  | venv
+  | workspaces
+  | __pycache__
+)/
+'''
+
+# ==========================================
+# isort - Import Sorter
+# ==========================================
+[tool.isort]
+profile = "black"
+line_length = 120
+known_third_party = [
+    "requests",
+    "bs4",
+    "github",
+    "dotenv",
+    "urllib3"
+]
+skip_glob = [
+    "venv/*",
+    "workspaces/*",
+    ".git/*"
+]
+
+# ==========================================
+# Flake8 - Linter
+# ==========================================
+[tool.flake8]
+max-line-length = 120
+extend-ignore = [
+    "E203",  # Whitespace before ':' (conflicts with Black)
+    "E501",  # Line too long (handled by Black)
+    "W503"   # Line break before binary operator (conflicts with Black)
+]
+exclude = [
+    ".git",
+    "__pycache__",
+    "venv",
+    "workspaces",
+    "build",
+    "dist"
+]
+per-file-ignores = [
+    "__init__.py:F401"  # Allow unused imports in __init__.py
+]
+
+# ==========================================
+# MyPy - Type Checking (Optional but recommended)
+# ==========================================
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = [
+    "venv/",
+    "workspaces/"
+]

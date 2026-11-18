@@ -1,29 +1,32 @@
-import requests
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import requests
+
 from engine.base import BaseReconModule
+
 
 class HeaderAnalyzer(BaseReconModule):
     # WAF Signatures (Header Name -> Regex Pattern)
     WAF_SIGNATURES = {
-        'Cloudflare': {'cf-ray': r'.*', 'server': r'cloudflare', 'x-frame-options': r'cloudflare'},
-        'Akamai': {'x-akamai-transformed': r'.*', 'x-akamai-request-id': r'.*'},
-        'F5 BIG-IP': {'x-waf-events': r'.*', 'server': r'big-?ip'},
-        'Fortinet': {'server': r'fortiwaf'},
-        'Sucuri': {'x-sucuri-id': r'.*', 'x-sucuri-cache': r'.*'},
-        'Imperva/Incapsula': {'x-iinfo': r'.*', 'x-cdn': r'incapsula'},
-        'AWS WAF/ALB': {'x-amz-cf-id': r'.*', 'server': r'awselb'},
-        'Barracuda': {'barra_counter_session': r'.*', 'barracuda_': r'.*'},
-        'ModSecurity': {'server': r'mod_security'}
+        "Cloudflare": {"cf-ray": r".*", "server": r"cloudflare", "x-frame-options": r"cloudflare"},
+        "Akamai": {"x-akamai-transformed": r".*", "x-akamai-request-id": r".*"},
+        "F5 BIG-IP": {"x-waf-events": r".*", "server": r"big-?ip"},
+        "Fortinet": {"server": r"fortiwaf"},
+        "Sucuri": {"x-sucuri-id": r".*", "x-sucuri-cache": r".*"},
+        "Imperva/Incapsula": {"x-iinfo": r".*", "x-cdn": r"incapsula"},
+        "AWS WAF/ALB": {"x-amz-cf-id": r".*", "server": r"awselb"},
+        "Barracuda": {"barra_counter_session": r".*", "barracuda_": r".*"},
+        "ModSecurity": {"server": r"mod_security"},
     }
 
     # Regex to extract versions from headers
     VERSION_PATTERNS = [
-        re.compile(r'(?i)server:\s*([a-zA-Z0-9\-_]+\s*[0-9\.]+)'),
-        re.compile(r'(?i)x-powered-by:\s*([a-zA-Z0-9\-_]+\s*[0-9\.]+)'),
-        re.compile(r'(?i)x-aspnet-version:\s*([0-9\.]+)'),
-        re.compile(r'(?i)x-generator:\s*([a-zA-Z0-9\-_]+\s*[0-9\.]+)')
+        re.compile(r"(?i)server:\s*([a-zA-Z0-9\-_]+\s*[0-9\.]+)"),
+        re.compile(r"(?i)x-powered-by:\s*([a-zA-Z0-9\-_]+\s*[0-9\.]+)"),
+        re.compile(r"(?i)x-aspnet-version:\s*([0-9\.]+)"),
+        re.compile(r"(?i)x-generator:\s*([a-zA-Z0-9\-_]+\s*[0-9\.]+)"),
     ]
 
     def execute(self):
@@ -31,7 +34,7 @@ class HeaderAnalyzer(BaseReconModule):
         endpoints = self.db.get_all_endpoints()
 
         # Filter to only live/interesting endpoints to save time
-        targets = [ep['url'] for ep in endpoints if ep['status_code'] > 0]
+        targets = [ep["url"] for ep in endpoints if ep["status_code"] > 0]
 
         analyzed_count = 0
         with ThreadPoolExecutor(max_workers=50) as executor:
@@ -40,7 +43,7 @@ class HeaderAnalyzer(BaseReconModule):
             for future in as_completed(futures):
                 result = future.result()
                 if result:
-                    self.db.update_endpoint_headers(result['url'], result['headers_json'], result['waf'])
+                    self.db.update_endpoint_headers(result["url"], result["headers_json"], result["waf"])
                     analyzed_count += 1
 
         print(f"[+] Analyzed headers for {analyzed_count} endpoints.")
@@ -78,13 +81,6 @@ class HeaderAnalyzer(BaseReconModule):
                 version_str = match.group(1).strip()
                 # Flag if it's a specific version (not just generic "PHP")
                 if any(char.isdigit() for char in version_str):
-                    self.db.insert_finding(
-                        "EXPOSED_VERSION", url,
-                        f"Header exposed version: {version_str}", "MEDIUM"
-                    )
+                    self.db.insert_finding("EXPOSED_VERSION", url, f"Header exposed version: {version_str}", "MEDIUM")
 
-        return {
-            'url': url,
-            'headers_json': headers_json,
-            'waf': detected_waf
-        }
+        return {"url": url, "headers_json": headers_json, "waf": detected_waf}

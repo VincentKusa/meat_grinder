@@ -1,7 +1,8 @@
-import sqlite3
 import json
+import sqlite3
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
 
 class DatabaseManager:
     def __init__(self, db_path: Path):
@@ -14,7 +15,8 @@ class DatabaseManager:
 
     def _init_db(self):
         with self._get_conn() as conn:
-            conn.execute("""CREATE TABLE IF NOT EXISTS subdomains
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS subdomains
                             (
                                 id
                                 INTEGER
@@ -26,8 +28,10 @@ class DatabaseManager:
                                 UNIQUE,
                                 source
                                 TEXT
-                            )""")
-            conn.execute("""CREATE TABLE IF NOT EXISTS endpoints
+                            )"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS endpoints
                             (
                                 id
                                 INTEGER
@@ -51,8 +55,10 @@ class DatabaseManager:
                                 TEXT,
                                 waf_detected
                                 TEXT
-                            )""")
-            conn.execute("""CREATE TABLE IF NOT EXISTS ports
+                            )"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS ports
             (
                 id
                 INTEGER
@@ -75,8 +81,10 @@ class DatabaseManager:
                             (
                 host,
                 source
-                            ))""")
-            conn.execute("""CREATE TABLE IF NOT EXISTS findings
+                            ))"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS findings
                             (
                                 id
                                 INTEGER
@@ -91,22 +99,71 @@ class DatabaseManager:
                                 TEXT,
                                 severity
                                 TEXT
-                            )""")
+                            )"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS os_recon
+                            (
+                                id
+                                INTEGER
+                                PRIMARY
+                                KEY
+                                AUTOINCREMENT,
+                                host
+                                TEXT
+                                UNIQUE,
+                                ip
+                                TEXT,
+                                os_name
+                                TEXT,
+                                os_accuracy
+                                TEXT,
+                                hostname
+                                TEXT,
+                                open_ports
+                                TEXT
+                            )"""
+            )
 
     def _migrate(self):
         with self._get_conn() as conn:
             try:
                 cols = [row[1] for row in conn.execute("PRAGMA table_info(endpoints)").fetchall()]
-                if 'headers_json' not in cols:
+                if "headers_json" not in cols:
                     conn.execute("ALTER TABLE endpoints ADD COLUMN headers_json TEXT")
-                if 'waf_detected' not in cols:
+                if "waf_detected" not in cols:
                     conn.execute("ALTER TABLE endpoints ADD COLUMN waf_detected TEXT")
 
                 cols_ports = [row[1] for row in conn.execute("PRAGMA table_info(ports)").fetchall()]
-                if 'os' not in cols_ports:
+                if "os" not in cols_ports:
                     conn.execute("ALTER TABLE ports ADD COLUMN os TEXT")
-                if 'services' not in cols_ports:
+                if "services" not in cols_ports:
                     conn.execute("ALTER TABLE ports ADD COLUMN services TEXT")
+                cols_os = [row[1] for row in conn.execute("PRAGMA table_info(os_recon)").fetchall()]
+                if not cols_os:  # Table doesn't exist yet
+                    conn.execute(
+                        """CREATE TABLE IF NOT EXISTS os_recon
+                                    (
+                                        id
+                                        INTEGER
+                                        PRIMARY
+                                        KEY
+                                        AUTOINCREMENT,
+                                        host
+                                        TEXT
+                                        UNIQUE,
+                                        ip
+                                        TEXT,
+                                        os_name
+                                        TEXT,
+                                        os_accuracy
+                                        TEXT,
+                                        hostname
+                                        TEXT,
+                                        open_ports
+                                        TEXT
+                                    )"""
+                    )
             except sqlite3.OperationalError:
                 pass
 
@@ -116,30 +173,39 @@ class DatabaseManager:
 
     def update_endpoint_headers(self, url: str, headers_json: str, waf: str):
         with self._get_conn() as conn:
-            conn.execute("""UPDATE endpoints
+            conn.execute(
+                """UPDATE endpoints
                             SET headers_json = ?,
                                 waf_detected = ?
                             WHERE url = ?""",
-                         (headers_json, waf, url))
+                (headers_json, waf, url),
+            )
 
-    def insert_endpoint(self, url: str, status: int, title: str, tech: str, length: int, webserver: str = ''):
+    def insert_endpoint(self, url: str, status: int, title: str, tech: str, length: int, webserver: str = ""):
         with self._get_conn() as conn:
-            conn.execute("""INSERT
-            OR IGNORE INTO endpoints 
-                (url, status_code, title, tech_stack, content_length, webserver) 
-                VALUES (?, ?, ?, ?, ?, ?)""", (url, status, title, tech, length, webserver))
-
-    def insert_port(self, host: str, ip: str, ports: list, source: str, os_info: str = '', services: dict = None):
-        with self._get_conn() as conn:
-            conn.execute("""INSERT OR REPLACE INTO ports 
-                (host, ip, ports, source, os, services) 
+            conn.execute(
+                """INSERT
+            OR IGNORE INTO endpoints
+                (url, status_code, title, tech_stack, content_length, webserver)
                 VALUES (?, ?, ?, ?, ?, ?)""",
-                         (host, ip, json.dumps(ports), source, os_info, json.dumps(services or {})))
+                (url, status, title, tech, length, webserver),
+            )
+
+    def insert_port(self, host: str, ip: str, ports: list, source: str, os_info: str = "", services: dict = None):
+        with self._get_conn() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO ports
+                (host, ip, ports, source, os, services)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (host, ip, json.dumps(ports), source, os_info, json.dumps(services or {})),
+            )
 
     def insert_finding(self, f_type: str, url: str, details: str, severity: str):
         with self._get_conn() as conn:
-            conn.execute("INSERT INTO findings (finding_type, url, details, severity) VALUES (?, ?, ?, ?)",
-                         (f_type, url, details, severity))
+            conn.execute(
+                "INSERT INTO findings (finding_type, url, details, severity) VALUES (?, ?, ?, ?)",
+                (f_type, url, details, severity),
+            )
 
     def get_all_subdomains(self) -> List[str]:
         with self._get_conn() as conn:
@@ -163,3 +229,17 @@ class DatabaseManager:
     def clear_findings(self):
         with self._get_conn() as conn:
             conn.execute("DELETE FROM findings")
+
+    def insert_os_recon(self, host: str, ip: str, os_name: str, accuracy: str, hostname: str, ports: str):
+        with self._get_conn() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO os_recon
+                (host, ip, os_name, os_accuracy, hostname, open_ports)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (host, ip, os_name, accuracy, hostname, ports),
+            )
+
+    def get_all_os_recon(self) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(row) for row in conn.execute("SELECT * FROM os_recon").fetchall()]

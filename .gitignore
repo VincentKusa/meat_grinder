@@ -73,3 +73,20 @@ Thumbs.db
 *.log
 *.tmp
 *.temp
+
+# ==========================================
+# PyCharm & IDE Files
+# ==========================================
+*.iml
+*.iws
+*.ipr
+
+# ==========================================
+# Python Formatting & Caching
+# ==========================================
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.coverage
+htmlcov/

@@ -1,11 +1,15 @@
-# 🥩 MEAT-GRINDER 
+# 🥩 MEAT-GRINDER
+
 ### Modular Engine for Asset Tracking & Reconnaissance
 
-MEAT-GRINDER is a production-grade, modular OSINT and reconnaissance engine built in Python. It orchestrates industry-standard CLI tools to map an organization's external attack surface, filtering out the "noise" (CDNs, default pages) to extract the "meat" (exposed panels, misconfigurations, guarded endpoints, and cloud leaks).
+MEAT-GRINDER is a production-grade, modular OSINT and reconnaissance engine built in Python. It orchestrates
+industry-standard CLI tools to map an organization's external attack surface, filtering out the "noise" (CDNs, default
+pages) to extract the "meat" (exposed panels, misconfigurations, guarded endpoints, and cloud leaks).
 
 ## 🏗 Architecture
 
-Instead of writing slow network scanners from scratch, MEAT-GRINDER uses Python as the **Orchestrator** and delegates heavy lifting to specialized Go-based CLI tools. 
+Instead of writing slow network scanners from scratch, MEAT-GRINDER uses Python as the **Orchestrator** and delegates
+heavy lifting to specialized Go-based CLI tools.
 
 1. **Subfinder** (Passive Subdomain Enum)
 2. **Naabu / Shodan** (Active/Passive Port Scanning)
@@ -15,23 +19,26 @@ Instead of writing slow network scanners from scratch, MEAT-GRINDER uses Python 
 
 ## 🚀 Features
 
-- **Clean OOP Design:** Modular architecture. Adding a new recon phase is as simple as creating a new class that inherits from `BaseReconModule`.
-- **Dual Port Scanning:** 
-  - `passive`: Queries Shodan InternetDB (Zero packets sent to target, no API key required).
-  - `active`: Uses Naabu for blazing-fast SYN scanning.
+- **Clean OOP Design:** Modular architecture. Adding a new recon phase is as simple as creating a new class that
+  inherits from `BaseReconModule`.
+- **Dual Port Scanning:**
+    - `passive`: Queries Shodan InternetDB (Zero packets sent to target, no API key required).
+    - `active`: Uses Naabu for blazing-fast SYN scanning.
 - **Deep Endpoint Triage:** Automatically categorizes endpoints into:
-  - 🛡️ **Guarded:** 401, 403, 407 (Authentication required).
-  - 💥 **Errors:** 500, 502, 503 (Server misconfigurations).
-  - 📂 **Directory Listings:** Exposed file indexes.
-  - ☁️ **Cloud Storage:** Exposed S3, Azure Blobs, GCP buckets.
-  - 🎣 **Takeover Candidates:** Dead CNAMEs pointing to unclaimed cloud resources.
+    - 🛡️ **Guarded:** 401, 403, 407 (Authentication required).
+    - 💥 **Errors:** 500, 502, 503 (Server misconfigurations).
+    - 📂 **Directory Listings:** Exposed file indexes.
+    - ☁️ **Cloud Storage:** Exposed S3, Azure Blobs, GCP buckets.
+    - 🎣 **Takeover Candidates:** Dead CNAMEs pointing to unclaimed cloud resources.
 - **Persistent State:** All data is stored in SQLite. If the engine crashes, you don't lose your data.
 - **Actionable Reporting:** Generates a clean, severity-grouped Markdown report.
 
 ## 🛠 Installation (Kali Linux)
 
 ### 1. Prerequisites
+
 Ensure you have Python 3, `pip`, and `golang` installed.
+
 ```bash
 sudo apt update
 sudo apt install python3-pip python3-venv golang-go -y
@@ -43,20 +50,22 @@ MEAT-GRINDER includes comprehensive Git repository scanning to find leaked secre
 
 ### What Gets Scanned
 
-1. **GitHub Repositories**: Automatically discovers and scans all repositories belonging to the target GitHub organization or user.
-2. **Exposed `.git` Directories**: Scans any `.git` directories discovered on the target's web servers during HTTP probing.
+1. **GitHub Repositories**: Automatically discovers and scans all repositories belonging to the target GitHub
+   organization or user.
+2. **Exposed `.git` Directories**: Scans any `.git` directories discovered on the target's web servers during HTTP
+   probing.
 
 ### How It Works
 
 - Uses the GitHub API to enumerate repositories (requires `GITHUB_TOKEN` in `.env`)
 - Clones each repository with `--depth 1` to save bandwidth
 - Runs **Gitleaks** against each repository to detect:
-  - AWS Access Keys
-  - GitHub Tokens
-  - Database Credentials
-  - API Keys (Stripe, Slack, etc.)
-  - Private Keys
-  - And 100+ other secret patterns
+    - AWS Access Keys
+    - GitHub Tokens
+    - Database Credentials
+    - API Keys (Stripe, Slack, etc.)
+    - Private Keys
+    - And 100+ other secret patterns
 - Parses findings and inserts them into the database as `CRITICAL` severity
 - Cleans up cloned repositories after scanning to save disk space
 
@@ -73,22 +82,28 @@ GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 MEAT-GRINDER now extracts deep infrastructure details beyond just URLs:
 
 ### Operating System Detection
+
 - **Passive Mode:** Extracts OS from Shodan InternetDB (e.g., "Ubuntu", "Windows Server 2019")
 - **Active Mode:** OS detection requires Nmap integration (future enhancement)
 
 ### Web Server Version Detection
+
 - Captures the `Server` HTTP header via HTTPX (e.g., `Apache/2.4.41`, `nginx/1.18.0`, `cloudflare`)
 - Automatically flags **outdated** web servers as findings:
-  - Apache 2.0-2.3
-  - Nginx 1.0-1.9
-  - IIS 5-7
-  - PHP 5.x
-  - OpenSSL 1.0.x
+    - Apache 2.0-2.3
+    - Nginx 1.0-1.9
+    - IIS 5-7
+    - PHP 5.x
+    - OpenSSL 1.0.x
 
 ### Application & Service Detection
-- **Port-to-Service Mapping:** Automatically identifies 30+ common services (SSH, RDP, MySQL, Redis, Elasticsearch, MongoDB, etc.)
-- **CPE Fingerprinting:** Uses Shodan's Common Platform Enumeration data to identify specific applications (Jenkins, Tomcat, JBoss, WebLogic, SharePoint)
-- **Risky Service Flagging:** Automatically flags exposed database ports, remote access services, and in-memory stores as HIGH/MEDIUM findings
+
+- **Port-to-Service Mapping:** Automatically identifies 30+ common services (SSH, RDP, MySQL, Redis, Elasticsearch,
+  MongoDB, etc.)
+- **CPE Fingerprinting:** Uses Shodan's Common Platform Enumeration data to identify specific applications (Jenkins,
+  Tomcat, JBoss, WebLogic, SharePoint)
+- **Risky Service Flagging:** Automatically flags exposed database ports, remote access services, and in-memory stores
+  as HIGH/MEDIUM findings
 
 ### Example Report Output
 
@@ -128,46 +143,156 @@ python3 main.py example.com --mode active --skip-git
 
 ## 🕵️ Sensitive File & Secret Detection
 
-MEAT-GRINDER actively hunts for exposed configuration files (`.env`, `.env.bak`, `config.php`, `.git/config`, `database.yml`, etc.) on all discovered web endpoints.
+MEAT-GRINDER actively hunts for exposed configuration files (`.env`, `.env.bak`, `config.php`, `.git/config`,
+`database.yml`, etc.) on all discovered web endpoints.
 
 ### Zero False Positives
-Many servers return a generic `200 OK` custom "404 Page" for any requested URL. To prevent noise, the `SensitiveFileScanner` reads the first 2KB of any `200 OK` response and applies strict Regex validation. It will **only** flag the file as `CRITICAL` if it detects actual secret patterns, such as:
+
+Many servers return a generic `200 OK` custom "404 Page" for any requested URL. To prevent noise, the
+`SensitiveFileScanner` reads the first 2KB of any `200 OK` response and applies strict Regex validation. It will
+**only** flag the file as `CRITICAL` if it detects actual secret patterns, such as:
+
 - `DB_PASSWORD`, `DATABASE_URL`, `SECRET_KEY`, `JWT_SECRET`
-- `-----BEGIN RSA PRIVATE KEY-----`
+- `-----BEGIN RSA PRIVATE  KEY-----`
 - `aws_access_key_id`, `STRIPE_SECRET_KEY`
 
-Files that return `200 OK` but contain no recognizable secret patterns are downgraded to `MEDIUM` for manual review, ensuring you never waste time on fake positives.
+Files that return `200 OK` but contain no recognizable secret patterns are downgraded to `MEDIUM` for manual review,
+ensuring you never waste time on fake positives.
 
 ## 🕸️ Web Content & Frontend Secret Scanning
 
-Developers frequently hardcode secrets directly into frontend JavaScript files, assuming minification or obscurity provides security. MEAT-GRINDER actively hunts for these leaks.
+Developers frequently hardcode secrets directly into frontend JavaScript files, assuming minification or obscurity
+provides security. MEAT-GRINDER actively hunts for these leaks.
 
 ### How It Works
-1. **Extraction:** Fetches the HTML of all live endpoints and extracts all linked `.js` files (`<script src="...">`) and inline `<script>` blocks.
+
+1. **Extraction:** Fetches the HTML of all live endpoints and extracts all linked `.js` files (`<script src="...">`) and
+   inline `<script>` blocks.
 2. **Targeted Download:** Downloads these files (capped at 100KB to avoid massive, slow bundle downloads).
 3. **High-Precision Regex:** Scans the content for specific, high-value patterns, including:
-   - AWS Access/Secret Keys (`AKIA...`)
-   - Stripe Live/Test Keys (`sk_live_...`)
-   - GitHub Personal Access Tokens (`ghp_...`)
-   - Google API Keys (`AIza...`)
-   - Slack Tokens (`xoxb-...`)
-   - JSON Web Tokens (JWTs)
-   - Generic high-entropy `api_key`, `secret`, or `password` assignments.
-   - Internal/Staging domain leaks (e.g., `api-dev.vulnbank.org`).
+    - AWS Access/Secret Keys (`AKIA...`)
+    - Stripe Live/Test Keys (`sk_live_...`)
+    - GitHub Personal Access Tokens (`ghp_...`)
+    - Google API Keys (`AIza...`)
+    - Slack Tokens (`xoxb-...`)
+    - JSON Web Tokens (JWTs)
+    - Generic high-entropy `api_key`, `secret`, or `password` assignments.
+    - Internal/Staging domain leaks (e.g., `api-dev.vulnbank.org`).
 
 ### Zero Noise Guarantee
-The regex patterns are designed to match *specific formats* and *high-entropy strings*. It will not flag a variable named `let password = "";`. It only flags when an actual, lengthy secret value is assigned, ensuring every finding is actionable.
+
+The regex patterns are designed to match *specific formats* and *high-entropy strings*. It will not flag a variable
+named `let password = "";`. It only flags when an actual, lengthy secret value is assigned, ensuring every finding is
+actionable.
+
+## 📱 Mobile Application Analysis (Android & iOS)
+
+MEAT-GRINDER can perform static analysis on mobile applications to uncover hidden API endpoints, insecure
+configurations, and hardcoded secrets that are never exposed on the web.
+
+### Supported Formats
+
+- **Android (`.apk`)**: Analyzes `AndroidManifest.xml`, embedded resources, and decompiled code.
+- **iOS (`.ipa`)**: Extracts and parses `Info.plist`, embedded provisioning profiles, and runs static analysis on the
+  app bundle.
+
+### How It Works
+
+1. **Download**: Fetches the `.apk` or `.ipa` file from a provided URL.
+   تفسير
+2. **MobSF Scan**: Runs `mobsfscan` to detect hardcoded secrets, insecure network configurations, and dangerous
+   permissions.
+3. **iOS Plist Extraction**: Specifically for iOS, it unzips the `.ipa`, locates the `Info.plist` file, and extracts
+   high-value keys (e.g., custom URL schemes, Firebase configs, API keys).
+4. **Cleanup**: Automatically deletes the heavy application file after analysis to save disk space.
+
+### Usage
+
+```bash
+# Analyze an Android app
+python3 main.py example.com --apk-url "https://example.com/app-release.apk"
+
+# Analyze an iOS app
+python3 main.py example.com --ipa-url "https://example.com/app-release.ipa"
+
+# Full spectrum: Web + Cloud + Git + Android + iOS
+python3 main.py vulnbank.org --github-target Commando-X --apk-url "https://vulnbank.org/android.apk" --ipa-url "https://vulnbank.org/ios.ipa"
+```
+
+**Deep OS Fingerprinting (Active Mode Only):**
+Uses Nmap (`-sS -sV -O`) to identify exact Operating System versions, service banners, and End-of-Life (EOL) software,
+flagging them as HIGH severity findings.
+
+## 👤 Human Intelligence (HUMINT) & Contact OSINT
+
+MEAT-GRINDER pivots from pure infrastructure mapping to human-centric intelligence by extracting domain registrar
+details and associated contact information, then automatically searching for their public digital footprints.
+
+### How It Works
+
+1. **WHOIS Extraction:** Queries domain registration data to extract registrar info, creation dates, and
+   admin/tech/registrant emails.
+2. **Privacy Filtering:** Automatically discards useless placeholders like `"REDACTED FOR PRIVACY"`, `"none"`, or
+   privacy-proxy emails.
+3. **Username Pivoting:** Extracts the username portion of valid emails (e.g., `johndoe` from `johndoe@example.com`).
+4. **Search Engine OSINT:** Queries DuckDuckGo (which allows automated HTML scraping without API keys) using exact email
+   and username matches.
+5. **Social Media Matching:** Parses search results to identify and extract direct links to public profiles on LinkedIn,
+   GitHub, Twitter/X, Facebook, and more.
+
+## 🏷️ HTML Metadata & Deep Mobile Analysis
+
+### HTML Metadata Extraction
+
+Beyond JavaScript secrets, MEAT-GRINDER parses the raw HTML of every live endpoint to uncover:
+
+- **`<meta>` Tags:** Extracts `generator` (reveals CMS versions like WordPress 5.8), `author` (developer names for
+  LinkedIn pivoting), and `application-name`.
+- **HTML Comments:** Developers frequently leave TODO notes, API keys, internal URLs, and debug info in `<!-- -->`
+  comments. The engine regex-scans all comments for secrets, internal domains, and attribution ("Built by John Doe").
+- **Hidden Form Fields:** Flags hidden inputs with sensitive names (`csrf_token`, `api_key`, `session_id`) that may leak
+  credentials.
+- **Open Graph / Twitter Cards:** Extracts social media profile links embedded in page metadata.
+- **Link Tags:** Detects PWA manifests and alternate API endpoints.
+
+### Deep Mobile Manifest Analysis
+
+Beyond `mobsfscan`, MEAT-GRINDER performs explicit, granular analysis of mobile app manifests:
+
+#### Android (`AndroidManifest.xml` via apktool)
+
+- **`allowBackup=true`** → Full app data extractable via `adb backup` (HIGH)
+- **`debuggable=true`** → Production app is debuggable (CRITICAL)
+- **Exported Components** → Activities/services/receivers accessible to other apps (HIGH)
+- **Custom URL Schemes** → Deep link hijacking attack surface (MEDIUM)
+- **Dangerous Permissions** → CAMERA, SMS, CONTACTS, LOCATION access (MEDIUM)
+- **Cleartext Traffic** → HTTP allowed via network security config (HIGH)
+
+#### iOS (`Info.plist` + Entitlements)
+
+- **URL Schemes** → Deep linking attack surface (MEDIUM)
+- **ATS Bypasses** → `NSAllowsArbitraryLoads=true` allows all HTTP (HIGH)
+- **ATS Exceptions** → Specific domains allowing insecure HTTP (MEDIUM)
+- **Hardcoded Secrets in Plist** → API keys, Firebase URLs, Stripe keys (HIGH)
+- **Keychain Access Groups** → Shared credentials between apps (INFO)
+- **Associated Domains** → Universal links configuration (INFO)
+- **Push Notification Environment** → Development vs production APNs (INFO)
+
+### Example Report Output
 
 ## 🚀 Installation & Setup
 
 Follow these steps to clone, configure, and start the engine on a fresh Kali Linux environment.
 
 ### 1. Clone the Repository
+
 ```bash
 git clone <your-repository-url> meat_grinder
 cd meat_grinder
 ```
+
 # Install System Dependencies & Go Tools
+
 Ensure Python 3, pip, and golang are installed, then compile the required reconnaissance binaries.
 
 # Install OS-level dependencies
@@ -178,6 +303,7 @@ sudo apt install python3-pip python3-venv golang-go curl wget -y
 ```
 
 # Install Go-based reconnaissance tools
+
 ```
 go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
@@ -187,39 +313,48 @@ go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
 ```
 
 # Move binaries to global PATH and set execute permissions
+
 ```
 sudo cp $(go env GOPATH)/bin/{subfinder,httpx,naabu,gitleaks,nuclei} /usr/local/bin/
 sudo chmod +x /usr/local/bin/{subfinder,httpx,naabu,gitleaks,nuclei}
 ```
 
 # Initialize Nuclei templates (Critical: bypasses GitHub API rate limits)
+
 ```
 rm -rf ~/.local/nuclei-templates
 wget -qO /tmp/nuclei-templates.tar.gz https://github.com/projectdiscovery/nuclei-templates/archive/refs/heads/main.zip
 unzip -q /tmp/nuclei-templates.tar.gz -d /tmp/ 2>/dev/null || tar -xzf /tmp/nuclei-templates.tar.gz -C /tmp/
 mkdir -p ~/.local/nuclei-templates
 mv /tmp/nuclei-templates*/* ~/.local/nuclei-templates/ 2>/dev/null
+rm /tmp/nuclei-templates.zip
 ```
 
 # Create and activate virtual environment
+
 ```
 python3 -m venv venv
 source venv/bin/activate
 ```
 
 # Install Python dependencies
+
 ```
 pip install -r requirements.txt
 cp .env.example .env
 ```
 
 # Inside .env, add your GitHub Personal Access Token:
+
 ```
 GITHUB_TOKEN=ghp_your_actual_github_token_here
 ```
 
-# Run the engine against a target domain. 
-The engine will automatically create a workspaces/<target>/ directory containing the SQLite database and the final Markdown report.
+# Run the engine against a target domain.
+
+The engine will automatically create a workspaces/<target>/ directory containing the SQLite database and the final
+Markdown report.
+
 ```
 # 1. Standard Run (Passive port scanning + Fuzzy GitHub search)
 python3 main.py example.com
@@ -235,6 +370,7 @@ python3 main.py example.com --skip-git
 ```
 
 # Viewing Results
+
 Once the run completes, view the actionable insights in the generated report:
 
 ```
