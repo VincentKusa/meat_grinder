@@ -3,25 +3,33 @@ import sys
 
 from config import Config
 from database import DatabaseManager
+from engine.admin_discovery import AdminDiscovery
 from engine.api_scanner import APIScanner
+from engine.asn_mapper import ASNMapper
 from engine.browser_evidence import BrowserEvidence
 from engine.cloud_scanner import CloudScanner
 from engine.dns_scanner import DNSScanner
+from engine.email_osint import EmailOSINT
 from engine.git_scanner import GitScanner
 from engine.header_analyzer import HeaderAnalyzer
 from engine.html_metadata_extractor import HTMLMetadataExtractor
 from engine.http_prober import HTTPProber
 from engine.iac_scanner import IaCScanner
 from engine.insight_filter import InsightFilter
+from engine.js_recursive_scanner import JSRecursiveScanner
 from engine.mobile_scanner import MobileScanner
 from engine.nuclei_scanner import NucleiScanner
 from engine.os_recon import OSRecon
+from engine.paste_monitor import PasteMonitor
 from engine.port_scanner import PortScanner
 from engine.sast_scanner import SASTScanner
 from engine.sbom_scanner import SBOMScanner
 from engine.sensitive_file_scanner import SensitiveFileScanner
+from engine.sourcemap_scanner import SourceMapScanner
 from engine.subdomain_enum import SubdomainEnumerator
+from engine.takeover_verifier import TakeoverVerifier
 from engine.tls_scanner import TLSScanner
+from engine.wayback_scanner import WaybackScanner
 from engine.web_content_scanner import WebContentScanner
 from engine.whois_contact_osint import WhoisContactOSINT
 from reporting.markdown_gen import MarkdownReporter
@@ -89,6 +97,7 @@ def main():
     SubdomainEnumerator(target, db, workspace).execute()
     WhoisContactOSINT(target, db, workspace).execute()
     DNSScanner(target, db, workspace).execute()
+    WaybackScanner(target, db, workspace).execute()
 
     # ==========================================
     # 2. Port & OS Reconnaissance
@@ -98,6 +107,7 @@ def main():
         OSRecon(target, db, workspace).execute()
     else:
         print("[*] Skipping Active OS Recon (Use --mode active to enable Nmap fingerprinting)")
+    ASNMapper(target, db, workspace).execute()
 
     # ==========================================
     # 3. Web Surface Analysis
@@ -111,8 +121,11 @@ def main():
     # ==========================================
     SensitiveFileScanner(target, db, workspace).execute()
     WebContentScanner(target, db, workspace).execute()
+    JSRecursiveScanner(target, db, workspace).execute()
     HTMLMetadataExtractor(target, db, workspace).execute()
     APIScanner(target, db, workspace).execute()
+    SourceMapScanner(target, db, workspace).execute()
+    AdminDiscovery(target, db, workspace).execute()
 
     # ==========================================
     # 5. Vulnerability & Misconfiguration
@@ -135,9 +148,13 @@ def main():
         SBOMScanner(target, db, workspace).execute()
         IaCScanner(target, db, workspace).execute()
 
+    PasteMonitor(target, db, workspace).execute()
+    EmailOSINT(target, db, workspace).execute()
+
     # ==========================================
     # 8. Filtering & Evidence
     # ==========================================
+    TakeoverVerifier(target, db, workspace).execute()
     InsightFilter(target, db, workspace).execute()
     if not args.no_screenshots:
         BrowserEvidence(target, db, workspace).execute()
