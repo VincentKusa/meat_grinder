@@ -6,20 +6,33 @@ from database import DatabaseManager
 
 
 class MarkdownReporter:
-    def __init__(self, db: DatabaseManager, target: str, workspace: Path):
+    def __init__(
+        self, db: DatabaseManager, target: str, workspace: Path, diff_mode: bool = False, last_scan: str = None
+    ):
         self.db = db
         self.target = target
         self.workspace = workspace
+        self.diff_mode = diff_mode
+        self.last_scan = last_scan
 
     def generate(self):
-        findings = self.db.get_all_findings()
+        # Fetch findings based on diff mode
+        if self.diff_mode and self.last_scan:
+            findings = self.db.get_new_findings_since(self.last_scan)
+        else:
+            findings = self.db.get_all_findings()
+
         ports = self.db.get_all_ports()
         endpoints = self.db.get_all_endpoints()
         report_path = self.workspace / f"REPORT_{self.target}.md"
 
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(f"# OSINT Insight Report: {self.target}\n")
-            f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+            if self.diff_mode and self.last_scan:
+                f.write(f"**Mode:** Diff (New findings since {self.last_scan})\n")
+            f.write("\n")
 
             f.write("## Executive Summary\n")
             f.write(f"- **Actionable Findings:** {len(findings)}\n")
@@ -68,20 +81,6 @@ class MarkdownReporter:
                     f.write(f"| `{ws}` | {count} |\n")
                 f.write("\n")
 
-            # ============ VISUAL PROOF (SCREENSHOTS) ============
-            screenshot_dir = self.workspace / "screenshots"
-            if screenshot_dir.exists() and any(screenshot_dir.iterdir()):
-                f.write("## 📸 Visual Proof (Screenshots)\n\n")
-                f.write("The following screenshots were captured for HIGH/CRITICAL findings:\n\n")
-
-                # Get all png files
-                screenshots = list(screenshot_dir.glob("*.png"))
-                for i, img_path in enumerate(screenshots[:10]):  # Limit to 10 to avoid massive reports
-                    # Use relative path for Markdown
-                    rel_path = f"screenshots/{img_path.name}"
-                    f.write(f"### Finding {i + 1}\n")
-                    f.write(f"![Screenshot {i + 1}]({rel_path})\n\n")
-
             # ============ OS RECONNAISSANCE ============
             os_data = self.db.get_all_os_recon()
             if os_data:
@@ -102,9 +101,9 @@ class MarkdownReporter:
 
             # ============ HUMAN INTELLIGENCE (WHOIS/CONTACTS) ============
             human_findings = [
-                f
-                for f in findings
-                if f["finding_type"] in ["SOCIAL_MEDIA_CONTACT", "WHOIS_CONTACT_EMAIL", "DOMAIN_WHOIS_INFO"]
+                fd
+                for fd in findings
+                if fd["finding_type"] in ["SOCIAL_MEDIA_CONTACT", "WHOIS_CONTACT_EMAIL", "DOMAIN_WHOIS_INFO"]
             ]
             if human_findings:
                 f.write("## 👤 Human Intelligence & Contact OSINT\n\n")
@@ -113,18 +112,41 @@ class MarkdownReporter:
                     f.write(f"  - *Details:* {fd['details']}\n\n")
                 f.write("---\n\n")
 
-            # ============ FINDINGS ============
+            # ============ DETAILED FINDINGS ============
             if not findings:
+                f.write("## Detailed Findings\n\n")
                 f.write("*No high-value insights found.*\n")
-                return
+            else:
+                f.write("## Detailed Findings\n\n")
+                for severity in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
+                    sev_findings = [fd for fd in findings if fd["severity"] == severity]
+                    if sev_findings:
+                        f.write(f"### {severity} Severity ({len(sev_findings)})\n\n")
+                        for fd in sev_findings:
+                            f.write(f"- **[{fd['finding_type']}]** `{fd['url']}`\n")
+                            f.write(f"  - *Details:* {fd['details']}\n")
 
-            f.write("## Detailed Findings\n\n")
-            for severity in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
-                sev_findings = [fd for fd in findings if fd["severity"] == severity]
-                if sev_findings:
-                    f.write(f"### {severity} Severity ({len(sev_findings)})\n\n")
-                    for fd in sev_findings:
-                        f.write(f"- **[{fd['finding_type']}]** `{fd['url']}`\n")
-                        f.write(f"  - *Details:* {fd['details']}\n\n")
+                            # Add new deduplication/tracking fields if they exist
+                            if fd.get("occurrences", 1) > 1:
+                                f.write(f"  - *Occurrences:* {fd['occurrences']}\n")
+                            if fd.get("confidence"):
+                                f.write(f"  - *Confidence:* {fd['confidence']}\n")
+                            if fd.get("first_seen"):
+                                f.write(f"  - *First Seen:* {fd['first_seen']}\n")
+                            if fd.get("last_seen"):
+                                f.write(f"  - *Last Seen:* {fd['last_seen']}\n")
+                            f.write("\n")
+
+            # ============ VISUAL PROOF (SCREENSHOTS) ============
+            screenshot_dir = self.workspace / "screenshots"
+            if screenshot_dir.exists() and any(screenshot_dir.iterdir()):
+                f.write("## 📸 Visual Proof (Screenshots)\n\n")
+                f.write("The following screenshots were captured for HIGH/CRITICAL findings:\n\n")
+
+                screenshots = list(screenshot_dir.glob("*.png"))
+                for i, img_path in enumerate(screenshots[:10]):  # Limit to 10 to avoid massive reports
+                    rel_path = f"screenshots/{img_path.name}"
+                    f.write(f"### Finding {i + 1}\n")
+                    f.write(f"![Screenshot {i + 1}]({rel_path})\n\n")
 
         print(f"[+] Report generated: {report_path}")

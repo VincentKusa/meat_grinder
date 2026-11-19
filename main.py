@@ -1,21 +1,27 @@
 import argparse
+import sys
 
 from config import Config
 from database import DatabaseManager
+from engine.api_scanner import APIScanner
+from engine.browser_evidence import BrowserEvidence
 from engine.cloud_scanner import CloudScanner
+from engine.dns_scanner import DNSScanner
 from engine.git_scanner import GitScanner
 from engine.header_analyzer import HeaderAnalyzer
 from engine.html_metadata_extractor import HTMLMetadataExtractor
 from engine.http_prober import HTTPProber
+from engine.iac_scanner import IaCScanner
 from engine.insight_filter import InsightFilter
 from engine.mobile_scanner import MobileScanner
 from engine.nuclei_scanner import NucleiScanner
 from engine.os_recon import OSRecon
 from engine.port_scanner import PortScanner
 from engine.sast_scanner import SASTScanner
-from engine.screenshotter import Screenshotter
+from engine.sbom_scanner import SBOMScanner
 from engine.sensitive_file_scanner import SensitiveFileScanner
 from engine.subdomain_enum import SubdomainEnumerator
+from engine.tls_scanner import TLSScanner
 from engine.web_content_scanner import WebContentScanner
 from engine.whois_contact_osint import WhoisContactOSINT
 from reporting.markdown_gen import MarkdownReporter
@@ -40,7 +46,20 @@ def main():
     parser.add_argument("--apk-url", type=str, default=None, help="Direct URL to target's Android APK file")
     parser.add_argument("--ipa-url", type=str, default=None, help="Direct URL to target's iOS IPA file")
 
+    # Advanced features
+    parser.add_argument("--doctor", action="store_true", help="Run pre-flight checks and exit")
+    parser.add_argument(
+        "--git-min-score", type=int, default=60, help="Minimum repo relevance score (0-100) for scanning"
+    )
+    parser.add_argument("--diff", action="store_true", help="Show only new findings since the last scan")
+    parser.add_argument("--no-screenshots", action="store_true", help="Disable browser evidence/screenshot capture")
+
     args = parser.parse_args()
+
+    # Pre-flight check
+    if args.doctor:
+        Config.print_status()
+        sys.exit(0)
 
     target = args.target
     workspace = Config.WORKSPACE_DIR / target
@@ -49,40 +68,87 @@ def main():
     db_path = workspace / "recon_data.db"
     db = DatabaseManager(db_path)
 
-    # FIX: Clear old findings at the START of the run, not in the middle
-    db.clear_findings()
+    # Get last scan time for diff mode
+    last_scan = db.get_last_scan_time(target) if args.diff else None
+
+    # Clear findings only if not in diff mode
+    if not args.diff:
+        db.clear_findings()
 
     print("=== MEAT-GRINDER ENGINE INITIATED ===")
     print(f"Target: {target} | Scan Mode: {args.mode.upper()}")
     if args.github_target:
         print(f"GitHub Target: {args.github_target}")
+    if args.diff and last_scan:
+        print(f"Diff Mode: Showing findings since {last_scan}")
     print()
 
+    # ==========================================
+    # 1. Passive Discovery & Intelligence
+    # ==========================================
     SubdomainEnumerator(target, db, workspace).execute()
     WhoisContactOSINT(target, db, workspace).execute()
-    PortScanner(target, db, workspace, mode=args.mode).execute()
+    DNSScanner(target, db, workspace).execute()
 
+    # ==========================================
+    # 2. Port & OS Reconnaissance
+    # ==========================================
+    PortScanner(target, db, workspace, mode=args.mode).execute()
     if args.mode == "active":
         OSRecon(target, db, workspace).execute()
     else:
         print("[*] Skipping Active OS Recon (Use --mode active to enable Nmap fingerprinting)")
 
+    # ==========================================
+    # 3. Web Surface Analysis
+    # ==========================================
     HTTPProber(target, db, workspace).execute()
     HeaderAnalyzer(target, db, workspace).execute()
+    TLSScanner(target, db, workspace).execute()
+
+    # ==========================================
+    # 4. Deep Content & Secret Scanning
+    # ==========================================
     SensitiveFileScanner(target, db, workspace).execute()
     WebContentScanner(target, db, workspace).execute()
     HTMLMetadataExtractor(target, db, workspace).execute()
+    APIScanner(target, db, workspace).execute()
+
+    # ==========================================
+    # 5. Vulnerability & Misconfiguration
+    # ==========================================
     NucleiScanner(target, db, workspace).execute()
     CloudScanner(target, db, workspace).execute()
-    MobileScanner(target, db, workspace, apk_url=args.apk_url, ipa_url=args.ipa_url).execute()
 
+    # ==========================================
+    # 6. Mobile Analysis (Optional)
+    # ==========================================
+    if args.apk_url or args.ipa_url:
+        MobileScanner(target, db, workspace, apk_url=args.apk_url, ipa_url=args.ipa_url).execute()
+
+    # ==========================================
+    # 7. Code & Repository Analysis
+    # ==========================================
     if not args.skip_git:
-        GitScanner(target, db, workspace, github_target=args.github_target).execute()
+        GitScanner(target, db, workspace, github_target=args.github_target, min_score=args.git_min_score).execute()
         SASTScanner(target, db, workspace).execute()
+        SBOMScanner(target, db, workspace).execute()
+        IaCScanner(target, db, workspace).execute()
 
+    # ==========================================
+    # 8. Filtering & Evidence
+    # ==========================================
     InsightFilter(target, db, workspace).execute()
-    Screenshotter(target, db, workspace).execute()
-    MarkdownReporter(db, target, workspace).generate()
+    if not args.no_screenshots:
+        BrowserEvidence(target, db, workspace).execute()
+
+    # ==========================================
+    # 9. Record & Report
+    # ==========================================
+    total_findings = len(db.get_all_findings())
+    db.record_scan_run(target, args.mode, total_findings)
+
+    MarkdownReporter(db, target, workspace, diff_mode=args.diff, last_scan=last_scan).generate()
 
     print("\n[!] Engine run complete.")
 

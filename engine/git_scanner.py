@@ -16,148 +16,160 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class GitScanner(BaseReconModule):
-    def __init__(self, target: str, db, workspace, github_target: str = None):
+    # Keywords that indicate test/CTF repos (lower score)
+    NOISE_KEYWORDS = [
+        "ctf",
+        "writeup",
+        "test",
+        "example",
+        "demo",
+        "sample",
+        "poc",
+        "handbook",
+        "learning",
+        "tutorial",
+        "lab",
+        "challenge",
+    ]
+
+    def __init__(self, target: str, db, workspace, github_target: str = None, min_score: int = 60):
         super().__init__(target, db, workspace)
+        self.github_target = github_target
+        self.min_score = min_score
         self.repos_dir = workspace / "git_repos"
         self.repos_dir.mkdir(exist_ok=True)
-        self.target_base_name = target.split(".")[0]
-        self.github_target = github_target  # NEW
 
     def execute(self):
         print("[*] Starting Advanced Git Repository Scanning...")
         repos_to_scan = set()
 
-        # Strategy 1: Scrape target website for GitHub links (Always runs)
+        # Strategy 1: Scrape target website for GitHub links (if we have live endpoints)
         print("[*] Strategy 1: Scraping target website for GitHub links...")
-        web_repos = self._scrape_website_for_github_links()
-        repos_to_scan.update(web_repos)
+        endpoints = self.db.get_all_endpoints()
+        for ep in endpoints:
+            if ep["status_code"] == 200:
+                repos_to_scan.update(self._scrape_github_links(ep["url"]))
 
-        # Strategy 2: GitHub API Search
-        if Config.GITHUB_TOKEN:
-            print("[*] Strategy 2: Searching GitHub API...")
-            if self.github_target:
-                print(f"[*] Explicitly targeting GitHub org/user: '{self.github_target}'")
-                api_repos = self._get_explicit_github_repos(self.github_target)
-                repos_to_scan.update(api_repos)
-            else:
-                print(f"[*] Fuzzy searching GitHub API for base name: '{self.target_base_name}'")
-                api_repos = self._search_github_api_fuzzy()
-                repos_to_scan.update(api_repos)
+        # Strategy 2: Search GitHub API
+        print("[*] Strategy 2: Searching GitHub API...")
+        if self.github_target:
+            print(f"[*] Explicitly targeting GitHub org/user: '{self.github_target}'")
+            repos_to_scan.update(self._get_explicit_target_repos(self.github_target))
         else:
-            print("[!] No GITHUB_TOKEN found in .env. Skipping GitHub API search.")
+            print(f"[*] Fuzzy searching GitHub API for base name: '{self.target.split('.')[0]}'")
+            repos_to_scan.update(self._fuzzy_search_github(self.target.split(".")[0]))
 
-        if not repos_to_scan:
-            print("[!] No related GitHub repositories found via scraping or API.")
+        # Filter and score repositories
+        print(f"[*] Found {len(repos_to_scan)} unique GitHub repositories to scan.")
+        filtered_repos = self._filter_and_score_repos(repos_to_scan)
+
+        print(f"[*] {len(filtered_repos)} repositories passed the minimum score threshold ({self.min_score}).")
+
+        if filtered_repos:
+            self._clone_and_scan(filtered_repos)
         else:
-            print(f"[*] Found {len(repos_to_scan)} unique GitHub repositories to scan.")
-            self._clone_and_scan(repos_to_scan)
+            print("[*] No repositories met the relevance score threshold. Skipping Git scan.")
 
-        # Strategy 3: Scan exposed .git directories
-        self._scan_exposed_git_dirs()
+    def _score_repository(self, repo_url: str, linked_from_website: bool) -> int:
+        """Score a repository's relevance to the target (0-100)"""
+        repo_name = repo_url.rstrip("/").split("/")[-1].lower()
+        owner = repo_url.rstrip("/").split("/")[-2].lower()
+        target_base = self.target.split(".")[0].lower()
 
-    def _get_explicit_github_repos(self, target_name: str) -> set:
-        """Fetches all non-archived, non-forked repos from a specific GitHub org or user."""
-        found_repos = set()
+        # 1. Explicit target match (guarantees inclusion with max score)
+        if self.github_target and owner == self.github_target.lower():
+            return 100
+
+        score = 0
+
+        # 2. Linked from target website
+        if linked_from_website:
+            score += 50
+
+        # 3. Repo name contains target base
+        if target_base in repo_name:
+            score += 30
+
+        # 4. Penalize noise keywords
+        for keyword in self.NOISE_KEYWORDS:
+            if keyword in repo_name or keyword in owner:
+                score -= 20
+
+        # Ensure score is in range 0-100
+        return max(0, min(100, score))
+
+    def _filter_and_score_repos(self, repos: set) -> set:
+        """Filter repositories based on their relevance score"""
+        filtered = set()
+        for repo in repos:
+            # Assume not linked from website for API-discovered repos to be safe,
+            # or you could track this in a dict. For simplicity, we score based on name/owner.
+            score = self._score_repository(repo, linked_from_website=False)
+            if score >= self.min_score:
+                filtered.add(repo)
+        return filtered
+
+    def _scrape_github_links(self, url: str) -> set:
+        repos = set()
+        try:
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = requests.get(url, headers=headers, timeout=10, verify=False)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                for a in soup.find_all("a", href=True):
+                    href = a["href"]
+                    if "github.com" in href and not href.endswith(".git"):
+                        # Clean up the URL to get the base repo URL
+                        match = re.search(r"(https?://github\.com/[^/]+/[^/]+)", href)
+                        if match:
+                            repos.add(match.group(1))
+        except Exception:
+            pass
+        return repos
+
+    def _get_explicit_target_repos(self, target: str) -> set:
+        repos = set()
         try:
             g = Github(Config.GITHUB_TOKEN)
-
-            # Try as Organization first
+            # Try as organization first, then user
             try:
-                org = g.get_organization(target_name)
-                print(f"[*] Found GitHub Organization: {org.name or org.login} ({org.public_repos} public repos)")
+                org = g.get_organization(target)
                 for repo in org.get_repos():
                     if not repo.archived and not repo.fork:
-                        found_repos.add(repo.html_url)
-                return found_repos
+                        repos.add(repo.html_url)
             except GithubException:
-                pass  # Not an org, try user
-
-            # Try as User
-            try:
-                user = g.get_user(target_name)
-                print(f"[*] Found GitHub User: {user.name or user.login} ({user.public_repos} public repos)")
-                for repo in user.get_repos():
-                    if not repo.archived and not repo.fork:
-                        found_repos.add(repo.html_url)
-                return found_repos
-            except GithubException:
-                print(f"[!] Could not find '{target_name}' as a GitHub organization or user.")
-
+                try:
+                    user = g.get_user(target)
+                    for repo in user.get_repos():
+                        if not repo.archived and not repo.fork:
+                            repos.add(repo.html_url)
+                except GithubException:
+                    print(f"[!] Could not find GitHub org or user: {target}")
         except Exception as e:
             print(f"[!] GitHub API error: {e}")
-        return found_repos
+        return repos
 
-    def _search_github_api_fuzzy(self) -> set:
-        """Fallback fuzzy search if no explicit target is provided."""
-        found_repos = set()
+    def _fuzzy_search_github(self, base_name: str) -> set:
+        repos = set()
         try:
             g = Github(Config.GITHUB_TOKEN)
-
-            # Search for repos with the base name in name, description, or readme
-            query = f"{self.target_base_name} in:name,description,readme"
-            repos = g.search_repositories(query=query, sort="stars", order="desc")
-
-            count = 0
-            for repo in repos:
-                if count >= 15:  # Limit to top 15 to avoid massive scans
-                    break
+            query = f'"{base_name}" in:readme OR "{base_name}" in:description OR "{base_name}" in:name'
+            search_result = g.search_repositories(query, sort="stars", order="desc")
+            for repo in search_result[:20]:  # Limit to top 20 to avoid massive scans
                 if not repo.archived and not repo.fork:
-                    found_repos.add(repo.html_url)
-                    count += 1
-
-            # Also search for code containing the full domain string
-            code_query = f'"{self.target}"'
-            code_results = g.search_code(code_query)
-            count = 0
-            for code in code_results:
-                if count >= 15:
-                    break
-                found_repos.add(code.repository.html_url)
-                count += 1
-
-        except GithubException as e:
-            print(f"[!] GitHub API error: {e}")
+                    repos.add(repo.html_url)
         except Exception as e:
-            print(f"[!] Error searching GitHub: {e}")
-
-        return found_repos
-
-    def _scrape_website_for_github_links(self) -> set:
-        found_repos = set()
-        target_url = f"https://{self.target}"
-
-        try:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            resp = requests.get(target_url, headers=headers, timeout=10, verify=False)
-            soup = BeautifulSoup(resp.text, "html.parser")
-
-            for a_tag in soup.find_all("a", href=True):
-                href = a_tag["href"]
-                match = re.search(r"github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)", href)
-                if match:
-                    repo_path = match.group(1)
-                    if repo_path.split("/")[0] not in [
-                        "settings",
-                        "explore",
-                        "marketplace",
-                        "topics",
-                        "trending",
-                        "collections",
-                        "events",
-                        "sponsors",
-                        "about",
-                    ]:
-                        found_repos.add(f"https://github.com/{repo_path}")
-        except Exception as e:
-            print(f"[!] Failed to scrape website: {e}")
-
-        return found_repos
+            print(f"[!] GitHub API search error: {e}")
+        return repos
 
     def _clone_and_scan(self, repos_to_scan: set):
+        """Clones repositories and runs Gitleaks."""
         scanned = 0
         for repo_url in repos_to_scan:
             repo_name = repo_url.rstrip("/").split("/")[-1]
             repo_path = self.repos_dir / repo_name
+
+            # Only clone if it doesn't already exist
             if repo_path.exists():
                 shutil.rmtree(repo_path)
 
@@ -165,7 +177,7 @@ class GitScanner(BaseReconModule):
             try:
                 clone_url = repo_url if repo_url.endswith(".git") else f"{repo_url}.git"
                 subprocess.run(
-                    ["git", "clone", "--depth", "1", clone_url, str(repo_path)],
+                    ["git", "clone", "--depth", str(Config.GIT_CLONE_DEPTH), clone_url, str(repo_path)],
                     capture_output=True,
                     check=True,
                     timeout=120,
@@ -183,80 +195,56 @@ class GitScanner(BaseReconModule):
 
         print(f"[+] Scanned {scanned} GitHub repositories")
 
-    def _scan_exposed_git_dirs(self):
-        print("[*] Scanning for exposed .git directories...")
-        endpoints = self.db.get_all_endpoints()
-        git_endpoints = [ep for ep in endpoints if "/.git/" in ep["url"].lower() or ep["url"].lower().endswith("/.git")]
-
-        if not git_endpoints:
-            print("[*] No exposed .git directories found")
-            return
-
-        print(f"[*] Found {len(git_endpoints)} potential exposed .git directories")
-        base_urls = set()
-        for ep in git_endpoints:
-            base_urls.add(ep["url"].split("/.git")[0])
-
-        for repo_url in base_urls:
-            repo_name = repo_url.split("/")[-1].replace(".", "_").replace(":", "_")
-            repo_path = self.repos_dir / f"exposed_{repo_name}"
-            if repo_path.exists():
-                shutil.rmtree(repo_path)
-
-            print(f"[*] Attempting to dump .git from {repo_url}/.git ...")
-            try:
-                repo_path.mkdir(parents=True, exist_ok=True)
-                head_url = f"{repo_url}/.git/HEAD"
-                head_file = repo_path / ".git" / "HEAD"
-                head_file.parent.mkdir(parents=True, exist_ok=True)
-
-                result = subprocess.run(
-                    ["curl", "-s", "-f", "-o", str(head_file), head_url], capture_output=True, timeout=10
-                )
-
-                if result.returncode == 0 and head_file.exists():
-                    self.db.insert_finding(
-                        "EXPOSED_GIT_DIRECTORY",
-                        repo_url,
-                        "Git directory is publicly accessible (HEAD found)",
-                        "CRITICAL",
-                    )
-                shutil.rmtree(repo_path)
-            except Exception as e:
-                print(f"[!] Failed to dump .git from {repo_url}: {e}")
-
-    def _run_gitleaks(self, repo_path: Path, source: str):
-        report_file = self.workspace / f"gitleaks_{repo_path.name}.json"
-        cmd = [
-            Config.GITLEAKS_BIN,
-            "detect",
-            "--source",
-            str(repo_path),
-            "--report-format",
-            "json",
-            "--report-path",
-            str(report_file),
-            "--exit-code",
-            "0",
-        ]
+    def _run_gitleaks(self, repo_path: Path, source_url: str):
+        """Runs gitleaks on the cloned repository."""
+        report_path = self.workspace / f"gitleaks_{repo_path.name}.json"
+        cmd = (
+            f"{Config.GITLEAKS_BIN} detect --source '{repo_path}' "
+            f"--report-format json --report-path '{report_path}' --no-git --no-banner"
+        )
 
         try:
-            subprocess.run(cmd, capture_output=True, check=True, timeout=120)
-            if report_file.exists() and report_file.stat().st_size > 2:
-                with open(report_file, "r") as f:
-                    findings = json.load(f)
-                for finding in findings:
-                    rule = finding.get("RuleID", "UNKNOWN")
-                    file_path = finding.get("File", "unknown")
-                    line = finding.get("StartLine", 0)
-                    secret = finding.get("Secret", "")[:20] + "..." if finding.get("Secret") else "N/A"
-                    details = f"Rule: {rule} | File: {file_path}:{line} | Secret: {secret}"
-                    self.db.insert_finding("LEAKED_SECRET", f"{source}/{file_path}", details, "CRITICAL")
-            if report_file.exists():
-                report_file.unlink()
-        except subprocess.CalledProcessError:
-            pass
+            subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
+
+            if report_path.exists() and report_path.stat().st_size > 2:
+                with open(report_path, "r") as f:
+                    data = json.load(f)
+
+                # Handle different Gitleaks versions:
+                # v8+ returns a direct list. v7 returns a dict with 'Issues' or 'Report'.
+                findings_list = []
+                if isinstance(data, list):
+                    findings_list = data
+                elif isinstance(data, dict):
+                    findings_list = data.get("Issues", []) or data.get("Report", [])
+
+                for finding in findings_list:
+                    # Gitleaks v8 structure
+                    secret = finding.get("Secret", "")
+                    rule = finding.get("RuleID", "unknown")
+                    file = finding.get("File", "unknown")
+                    line = finding.get("StartLine", "unknown")
+
+                    # Truncate secret for safety in reports
+                    safe_secret = secret[:20] + "..." if len(secret) > 20 else secret
+
+                    details = f"Rule: {rule} | File: {file}:{line} | Secret: {safe_secret}"
+
+                    self.db.insert_finding(
+                        f_type="LEAKED_SECRET",
+                        url=f"{source_url}/{file}",
+                        details=details,
+                        severity="CRITICAL",
+                        source_module="git_scanner",
+                        file_path=file,
+                        rule_id=rule,
+                    )
+
+            # Clean up report to save space
+            if report_path.exists():
+                report_path.unlink()
+
         except subprocess.TimeoutExpired:
             print(f"[!] Gitleaks timeout on {repo_path.name}")
         except Exception as e:
-            print(f"[!] Error running gitleaks on {repo_path.name}: {e}")
+            print(f"[!] Gitleaks error on {repo_path.name}: {e}")

@@ -6,373 +6,218 @@ MEAT-GRINDER is a production-grade, modular OSINT and reconnaissance engine buil
 industry-standard CLI tools to map an organization's external attack surface, filtering out the "noise" (CDNs, default
 pages) to extract the "meat" (exposed panels, misconfigurations, guarded endpoints, and cloud leaks).
 
-## 🏗 Architecture
+---
 
-Instead of writing slow network scanners from scratch, MEAT-GRINDER uses Python as the **Orchestrator** and delegates
-heavy lifting to specialized Go-based CLI tools.
+## ⚡ Quick Start
 
-1. **Subfinder** (Passive Subdomain Enum)
-2. **Naabu / Shodan** (Active/Passive Port Scanning)
-3. **HTTPX** (HTTP Probing & Tech Detection)
-4. **SQLite** (Persistent State & Data Relational Mapping)
-5. **Python Heuristics** (Noise Filtering & Insight Extraction)
-
-## 🚀 Features
-
-- **Clean OOP Design:** Modular architecture. Adding a new recon phase is as simple as creating a new class that
-  inherits from `BaseReconModule`.
-- **Dual Port Scanning:**
-    - `passive`: Queries Shodan InternetDB (Zero packets sent to target, no API key required).
-    - `active`: Uses Naabu for blazing-fast SYN scanning.
-- **Deep Endpoint Triage:** Automatically categorizes endpoints into:
-    - 🛡️ **Guarded:** 401, 403, 407 (Authentication required).
-    - 💥 **Errors:** 500, 502, 503 (Server misconfigurations).
-    - 📂 **Directory Listings:** Exposed file indexes.
-    - ☁️ **Cloud Storage:** Exposed S3, Azure Blobs, GCP buckets.
-    - 🎣 **Takeover Candidates:** Dead CNAMEs pointing to unclaimed cloud resources.
-- **Persistent State:** All data is stored in SQLite. If the engine crashes, you don't lose your data.
-- **Actionable Reporting:** Generates a clean, severity-grouped Markdown report.
-
-## 🛠 Installation (Kali Linux)
-
-### 1. Prerequisites
-
-Ensure you have Python 3, `pip`, and `golang` installed.
-
-```bash
-sudo apt update
-sudo apt install python3-pip python3-venv golang-go -y
-```
-
-## 🔐 Git Repository Scanning
-
-MEAT-GRINDER includes comprehensive Git repository scanning to find leaked secrets, API keys, and credentials.
-
-### What Gets Scanned
-
-1. **GitHub Repositories**: Automatically discovers and scans all repositories belonging to the target GitHub
-   organization or user.
-2. **Exposed `.git` Directories**: Scans any `.git` directories discovered on the target's web servers during HTTP
-   probing.
-
-### How It Works
-
-- Uses the GitHub API to enumerate repositories (requires `GITHUB_TOKEN` in `.env`)
-- Clones each repository with `--depth 1` to save bandwidth
-- Runs **Gitleaks** against each repository to detect:
-    - AWS Access Keys
-    - GitHub Tokens
-    - Database Credentials
-    - API Keys (Stripe, Slack, etc.)
-    - Private Keys
-    - And 100+ other secret patterns
-- Parses findings and inserts them into the database as `CRITICAL` severity
-- Cleans up cloned repositories after scanning to save disk space
-
-### Configuration
-
-Add your GitHub Personal Access Token to `.env`:
-
-```env
-GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
-
-## 🔍 Infrastructure Intelligence
-
-MEAT-GRINDER now extracts deep infrastructure details beyond just URLs:
-
-### Operating System Detection
-
-- **Passive Mode:** Extracts OS from Shodan InternetDB (e.g., "Ubuntu", "Windows Server 2019")
-- **Active Mode:** OS detection requires Nmap integration (future enhancement)
-
-### Web Server Version Detection
-
-- Captures the `Server` HTTP header via HTTPX (e.g., `Apache/2.4.41`, `nginx/1.18.0`, `cloudflare`)
-- Automatically flags **outdated** web servers as findings:
-    - Apache 2.0-2.3
-    - Nginx 1.0-1.9
-    - IIS 5-7
-    - PHP 5.x
-    - OpenSSL 1.0.x
-
-### Application & Service Detection
-
-- **Port-to-Service Mapping:** Automatically identifies 30+ common services (SSH, RDP, MySQL, Redis, Elasticsearch,
-  MongoDB, etc.)
-- **CPE Fingerprinting:** Uses Shodan's Common Platform Enumeration data to identify specific applications (Jenkins,
-  Tomcat, JBoss, WebLogic, SharePoint)
-- **Risky Service Flagging:** Automatically flags exposed database ports, remote access services, and in-memory stores
-  as HIGH/MEDIUM findings
-
-### Example Report Output
-
-```markdown
-## Infrastructure Inventory
-
-### Hosts, OS & Services
-
-| Host | IP | OS | Open Ports | Running Services |
-|---|---|---|---|---|
-| `api.example.com` | 1.2.3.4 | Ubuntu | [22, 80, 443] | 22(SSH), 80(HTTP), 443(HTTPS) |
-| `db.example.com` | 1.2.3.5 | Windows | [3306, 3389] | 3306(MySQL), 3389(RDP) |
-
-### Web Servers Detected
-
-| Web Server | Count |
-|---|---|
-| `Apache/2.4.41` | 12 |
-| `nginx/1.18.0` | 8 |
-| `cloudflare` | 45 |
-```
-
-### Usage
-
-Run the engine against a target domain.
-
-```bash
-# Default: Passive Port Scanning + Fuzzy GitHub Search
-python3 main.py example.com
-
-# Explicitly target a specific GitHub organization or user (Bypasses fuzzy search)
-python3 main.py vulnbank.org --github-target Commando-X
-
-# Active Port Scanning (Naabu) + Skip Git scanning for speed
-python3 main.py example.com --mode active --skip-git
-```
-
-## 🕵️ Sensitive File & Secret Detection
-
-MEAT-GRINDER actively hunts for exposed configuration files (`.env`, `.env.bak`, `config.php`, `.git/config`,
-`database.yml`, etc.) on all discovered web endpoints.
-
-### Zero False Positives
-
-Many servers return a generic `200 OK` custom "404 Page" for any requested URL. To prevent noise, the
-`SensitiveFileScanner` reads the first 2KB of any `200 OK` response and applies strict Regex validation. It will
-**only** flag the file as `CRITICAL` if it detects actual secret patterns, such as:
-
-- `DB_PASSWORD`, `DATABASE_URL`, `SECRET_KEY`, `JWT_SECRET`
-- `-----BEGIN RSA PRIVATE  KEY-----`
-- `aws_access_key_id`, `STRIPE_SECRET_KEY`
-
-Files that return `200 OK` but contain no recognizable secret patterns are downgraded to `MEDIUM` for manual review,
-ensuring you never waste time on fake positives.
-
-## 🕸️ Web Content & Frontend Secret Scanning
-
-Developers frequently hardcode secrets directly into frontend JavaScript files, assuming minification or obscurity
-provides security. MEAT-GRINDER actively hunts for these leaks.
-
-### How It Works
-
-1. **Extraction:** Fetches the HTML of all live endpoints and extracts all linked `.js` files (`<script src="...">`) and
-   inline `<script>` blocks.
-2. **Targeted Download:** Downloads these files (capped at 100KB to avoid massive, slow bundle downloads).
-3. **High-Precision Regex:** Scans the content for specific, high-value patterns, including:
-    - AWS Access/Secret Keys (`AKIA...`)
-    - Stripe Live/Test Keys (`sk_live_...`)
-    - GitHub Personal Access Tokens (`ghp_...`)
-    - Google API Keys (`AIza...`)
-    - Slack Tokens (`xoxb-...`)
-    - JSON Web Tokens (JWTs)
-    - Generic high-entropy `api_key`, `secret`, or `password` assignments.
-    - Internal/Staging domain leaks (e.g., `api-dev.vulnbank.org`).
-
-### Zero Noise Guarantee
-
-The regex patterns are designed to match *specific formats* and *high-entropy strings*. It will not flag a variable
-named `let password = "";`. It only flags when an actual, lengthy secret value is assigned, ensuring every finding is
-actionable.
-
-## 📱 Mobile Application Analysis (Android & iOS)
-
-MEAT-GRINDER can perform static analysis on mobile applications to uncover hidden API endpoints, insecure
-configurations, and hardcoded secrets that are never exposed on the web.
-
-### Supported Formats
-
-- **Android (`.apk`)**: Analyzes `AndroidManifest.xml`, embedded resources, and decompiled code.
-- **iOS (`.ipa`)**: Extracts and parses `Info.plist`, embedded provisioning profiles, and runs static analysis on the
-  app bundle.
-
-### How It Works
-
-1. **Download**: Fetches the `.apk` or `.ipa` file from a provided URL.
-   تفسير
-2. **MobSF Scan**: Runs `mobsfscan` to detect hardcoded secrets, insecure network configurations, and dangerous
-   permissions.
-3. **iOS Plist Extraction**: Specifically for iOS, it unzips the `.ipa`, locates the `Info.plist` file, and extracts
-   high-value keys (e.g., custom URL schemes, Firebase configs, API keys).
-4. **Cleanup**: Automatically deletes the heavy application file after analysis to save disk space.
-
-### Usage
-
-```bash
-# Analyze an Android app
-python3 main.py example.com --apk-url "https://example.com/app-release.apk"
-
-# Analyze an iOS app
-python3 main.py example.com --ipa-url "https://example.com/app-release.ipa"
-
-# Full spectrum: Web + Cloud + Git + Android + iOS
-python3 main.py vulnbank.org --github-target Commando-X --apk-url "https://vulnbank.org/android.apk" --ipa-url "https://vulnbank.org/ios.ipa"
-```
-
-**Deep OS Fingerprinting (Active Mode Only):**
-Uses Nmap (`-sS -sV -O`) to identify exact Operating System versions, service banners, and End-of-Life (EOL) software,
-flagging them as HIGH severity findings.
-
-## 👤 Human Intelligence (HUMINT) & Contact OSINT
-
-MEAT-GRINDER pivots from pure infrastructure mapping to human-centric intelligence by extracting domain registrar
-details and associated contact information, then automatically searching for their public digital footprints.
-
-### How It Works
-
-1. **WHOIS Extraction:** Queries domain registration data to extract registrar info, creation dates, and
-   admin/tech/registrant emails.
-2. **Privacy Filtering:** Automatically discards useless placeholders like `"REDACTED FOR PRIVACY"`, `"none"`, or
-   privacy-proxy emails.
-3. **Username Pivoting:** Extracts the username portion of valid emails (e.g., `johndoe` from `johndoe@example.com`).
-4. **Search Engine OSINT:** Queries DuckDuckGo (which allows automated HTML scraping without API keys) using exact email
-   and username matches.
-5. **Social Media Matching:** Parses search results to identify and extract direct links to public profiles on LinkedIn,
-   GitHub, Twitter/X, Facebook, and more.
-
-## 🏷️ HTML Metadata & Deep Mobile Analysis
-
-### HTML Metadata Extraction
-
-Beyond JavaScript secrets, MEAT-GRINDER parses the raw HTML of every live endpoint to uncover:
-
-- **`<meta>` Tags:** Extracts `generator` (reveals CMS versions like WordPress 5.8), `author` (developer names for
-  LinkedIn pivoting), and `application-name`.
-- **HTML Comments:** Developers frequently leave TODO notes, API keys, internal URLs, and debug info in `<!-- -->`
-  comments. The engine regex-scans all comments for secrets, internal domains, and attribution ("Built by John Doe").
-- **Hidden Form Fields:** Flags hidden inputs with sensitive names (`csrf_token`, `api_key`, `session_id`) that may leak
-  credentials.
-- **Open Graph / Twitter Cards:** Extracts social media profile links embedded in page metadata.
-- **Link Tags:** Detects PWA manifests and alternate API endpoints.
-
-### Deep Mobile Manifest Analysis
-
-Beyond `mobsfscan`, MEAT-GRINDER performs explicit, granular analysis of mobile app manifests:
-
-#### Android (`AndroidManifest.xml` via apktool)
-
-- **`allowBackup=true`** → Full app data extractable via `adb backup` (HIGH)
-- **`debuggable=true`** → Production app is debuggable (CRITICAL)
-- **Exported Components** → Activities/services/receivers accessible to other apps (HIGH)
-- **Custom URL Schemes** → Deep link hijacking attack surface (MEDIUM)
-- **Dangerous Permissions** → CAMERA, SMS, CONTACTS, LOCATION access (MEDIUM)
-- **Cleartext Traffic** → HTTP allowed via network security config (HIGH)
-
-#### iOS (`Info.plist` + Entitlements)
-
-- **URL Schemes** → Deep linking attack surface (MEDIUM)
-- **ATS Bypasses** → `NSAllowsArbitraryLoads=true` allows all HTTP (HIGH)
-- **ATS Exceptions** → Specific domains allowing insecure HTTP (MEDIUM)
-- **Hardcoded Secrets in Plist** → API keys, Firebase URLs, Stripe keys (HIGH)
-- **Keychain Access Groups** → Shared credentials between apps (INFO)
-- **Associated Domains** → Universal links configuration (INFO)
-- **Push Notification Environment** → Development vs production APNs (INFO)
-
-### Example Report Output
-
-## 🚀 Installation & Setup
-
-Follow these steps to clone, configure, and start the engine on a fresh Kali Linux environment.
-
-### 1. Clone the Repository
+### 1. Clone & Setup Environment
 
 ```bash
 git clone <your-repository-url> meat_grinder
 cd meat_grinder
-```
-
-# Install System Dependencies & Go Tools
-
-Ensure Python 3, pip, and golang are installed, then compile the required reconnaissance binaries.
 
 # Install OS-level dependencies
-
-```
 sudo apt update
-sudo apt install python3-pip python3-venv golang-go curl wget -y
-```
+sudo apt install python3-pip python3-venv golang-go curl wget unzip pipx -y
+
+# Install isolated CLI tools (prevents dependency conflicts)
+pipx install checkov
+pipx install mobsfscan
+pipx ensurepath
 
 # Install Go-based reconnaissance tools
-
-```
 go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
 go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
 go install -v github.com/zricethezav/gitleaks/v8@latest
 go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-```
 
-# Move binaries to global PATH and set execute permissions
-
-```
+# Move Go binaries to PATH
 sudo cp $(go env GOPATH)/bin/{subfinder,httpx,naabu,gitleaks,nuclei} /usr/local/bin/
 sudo chmod +x /usr/local/bin/{subfinder,httpx,naabu,gitleaks,nuclei}
+
+# Install Trivy (SBOM/IaC scanning)
+curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
 ```
 
-# Initialize Nuclei templates (Critical: bypasses GitHub API rate limits)
+### 2. Initialize Nuclei Templates
 
-```
+```bash
 rm -rf ~/.local/nuclei-templates
-wget -qO /tmp/nuclei-templates.tar.gz https://github.com/projectdiscovery/nuclei-templates/archive/refs/heads/main.zip
-unzip -q /tmp/nuclei-templates.tar.gz -d /tmp/ 2>/dev/null || tar -xzf /tmp/nuclei-templates.tar.gz -C /tmp/
+wget -qO /tmp/nuclei-templates.zip https://github.com/projectdiscovery/nuclei-templates/archive/refs/heads/main.zip
+unzip -q /tmp/nuclei-templates.zip -d /tmp/
 mkdir -p ~/.local/nuclei-templates
-mv /tmp/nuclei-templates*/* ~/.local/nuclei-templates/ 2>/dev/null
+mv /tmp/nuclei-templates-main/* ~/.local/nuclei-templates/
 rm /tmp/nuclei-templates.zip
 ```
 
-# Create and activate virtual environment
+### 3. Configure Python Environment & Secrets
 
-```
+```bash
 python3 -m venv venv
 source venv/bin/activate
-```
-
-# Install Python dependencies
-
-```
 pip install -r requirements.txt
+
+# Configure API keys
 cp .env.example .env
+nano .env  # Add your GITHUB_TOKEN here
 ```
 
-# Inside .env, add your GitHub Personal Access Token:
+---
 
-```
-GITHUB_TOKEN=ghp_your_actual_github_token_here
-```
+## 🚀 Usage & Options
 
-# Run the engine against a target domain.
+Run the engine against a target domain. Results are saved in `workspaces/<target>/`.
 
-The engine will automatically create a workspaces/<target>/ directory containing the SQLite database and the final
-Markdown report.
+### Basic Commands
 
-```
+```bash
 # 1. Standard Run (Passive port scanning + Fuzzy GitHub search)
 python3 main.py example.com
 
-# 2. Explicit GitHub Target (Highly recommended if you know the org/user)
+# 2. Explicit GitHub Target (Highly recommended to reduce noise)
 python3 main.py vulnbank.org --github-target Commando-X
 
-# 3. Aggressive Run (Active port scanning via Naabu)
+# 3. Aggressive Run (Active Naabu port scanning + Nmap OS fingerprinting)
 python3 main.py example.com --mode active
 
-# 4. Fast Run (Skip Git repository scanning for speed)
+# 4. Fast Run (Skip Git/SAST scanning for speed)
 python3 main.py example.com --skip-git
 ```
 
-# Viewing Results
+### Advanced Options
 
-Once the run completes, view the actionable insights in the generated report:
+| Flag                      | Description                                                                 |
+|:--------------------------|:----------------------------------------------------------------------------|
+| `--mode active`           | Enables active SYN port scanning (Naabu) and deep OS fingerprinting (Nmap). |
+| `--github-target <org>`   | Explicitly targets a GitHub org/user, bypassing fuzzy search.               |
+| `--git-min-score <0-100>` | Minimum relevance score to clone/scan a repo (Default: `60`).               |
+| `--apk-url <url>`         | Direct URL to an Android `.apk` file for static analysis.                   |
+| `--ipa-url <url>`         | Direct URL to an iOS `.ipa` file for static analysis.                       |
+| `--diff`                  | Continuous monitoring mode: shows *only* new findings since the last scan.  |
+| `--no-screenshots`        | Disables Playwright browser evidence capture.                               |
+| `--doctor`                | Runs a pre-flight check to verify all binaries and configurations.          |
 
-```
+### Viewing Results
+
+```bash
 cat workspaces/<target>/REPORT_<target>.md
 ```
+
+---
+
+## 📚 Documentation & Deep Dive
+
+### 🏗 Architecture
+
+Instead of writing slow network scanners from scratch, MEAT-GRINDER uses Python as the **Orchestrator** and delegates
+heavy lifting to specialized, highly optimized Go-based CLI tools. Data is persisted in a local SQLite database,
+ensuring crash resilience and enabling continuous monitoring (`--diff`).
+
+### 🔍 Core Capabilities
+
+#### 1. Infrastructure & Network Intelligence
+
+- **Subdomain Enumeration:** Passive harvesting via `subfinder`.
+- **Port Scanning:** Dual-mode support. `passive` uses Shodan InternetDB (zero packets); `active` uses `naabu` for
+  wire-speed SYN scanning.
+- **OS & Service Fingerprinting:** Active mode triggers `nmap` (`-sS -sV -O`) to detect exact OS versions, service
+  banners, and End-of-Life (EOL) software.
+- **DNS & TLS Intelligence:** Analyzes A/MX/TXT records, detects dangling CNAMEs (subdomain takeover), validates
+  SPF/DMARC, and inspects SSL certificates for expiry, weak protocols, and SAN discovery.
+
+#### 2. Web Surface Analysis
+
+- **HTTP Probing:** Uses `httpx` to extract status codes, titles, tech stacks, and content lengths.
+- **Header & WAF Analysis:** Detects Cloudflare, Akamai, etc., and flags missing security headers (HSTS, CSP).
+- **Sensitive File Hunting:** Regex-validated scanning for `.env`, `.git`, and config files. Ignores fake "200 OK"
+  custom 404 pages.
+- **Frontend Secret Scanning:** Downloads and scans linked `.js` files and inline scripts for hardcoded AWS, Stripe,
+  GitHub, and JWT secrets.
+- **HTML Metadata Extraction:** Parses `<meta>` tags, HTML comments (dev notes, internal URLs), hidden form fields, and
+  Open Graph data.
+- **API Surface Discovery:** Actively hunts for exposed Swagger/OpenAPI docs, GraphQL endpoints, and internal API paths
+  in source code.
+
+#### 3. Code & Repository Intelligence
+
+- **Git Discovery:** Scrapes target websites and queries the GitHub API to find relevant repositories.
+- **Relevance Scoring:** Repositories are scored 0-100. Test/CTF repos are penalized; explicit matches are prioritized.
+- **Surface Scanning:** Runs `gitleaks` on cloned repos to detect 100+ secret patterns.
+- **Deep SAST:** Runs `trufflehog` with `--only-verified` to dig through git history and confirm if discovered secrets
+  are still live.
+- **SBOM & Dependency Scanning:** Analyzes lock files (`package-lock.json`, `requirements.txt`) and runs `trivy` to find
+  vulnerable or outdated packages.
+- **IaC Security:** Runs `checkov` and custom parsers to detect misconfigurations in Dockerfiles, Terraform, and
+  Kubernetes manifests.
+
+#### 4. Mobile Application Analysis
+
+- **Android (`.apk`):** Uses `apktool` to decode `AndroidManifest.xml`, flagging `allowBackup=true`, `debuggable=true`,
+  exported components, custom URL schemes, and cleartext traffic allowances.
+- **iOS (`.ipa`):** Unzips the bundle to parse `Info.plist` and entitlements, detecting ATS bypasses
+  (`NSAllowsArbitraryLoads`), hardcoded API keys, and universal link configurations.
+- **Static Analysis:** Both formats are passed through `mobsfscan` for comprehensive security rule matching.
+
+#### 5. Cloud & HUMINT
+
+- **Cloud Permutation:** Generates smart permutations of the target name to check for exposed or private AWS S3, Azure
+  Blob, and GCP Storage buckets.
+- **Contact OSINT:** Extracts registrar emails from WHOIS, filters out privacy proxies, and uses DuckDuckGo to pivot
+  usernames to public LinkedIn, GitHub, or Twitter profiles.
+
+### 🎯 Advanced Features
+
+- **Finding Deduplication:** Every finding is fingerprinted using SHA256 hashing. Duplicate discoveries are merged, and
+  occurrence counts are tracked to eliminate report noise.
+- **Confidence Levels:** Findings are classified as `CONFIRMED`, `HIGH`, `MEDIUM`, `LOW`, or `INFO` based on the source
+  and verification status (e.g., TruffleHog verified secrets are `CONFIRMED`).
+- **Continuous Monitoring:** The `--diff` flag compares the current run against the last recorded scan timestamp,
+  generating a report of *only* new assets, ports, or secrets.
+- **Browser Evidence:** Replaces fragile screenshot tools with Playwright to reliably capture visual proof of
+  high-severity HTTP findings.
+
+### 🛠 Tooling Inventory
+
+| Category            | Tools Used                                                   | Purpose                                                                              |
+|:--------------------|:-------------------------------------------------------------|:-------------------------------------------------------------------------------------|
+| **Recon CLI**       | `subfinder`, `httpx`, `naabu`, `nuclei`                      | Passive/active discovery, probing, and templated vulnerability scanning.             |
+| **Secret Scanning** | `gitleaks`, `trufflehog`                                     | Surface and deep-history git secret detection.                                       |
+| **System Analysis** | `nmap`, `trivy`, `checkov`                                   | OS fingerprinting, SBOM/dependency scanning, and IaC misconfiguration detection.     |
+| **Mobile**          | `mobsfscan`, `apktool`                                       | Static analysis and manifest parsing for Android/iOS.                                |
+| **Python Core**     | `requests`, `PyGithub`, `dnspython`, `playwright`, `sqlite3` | Orchestration, API interaction, DNS parsing, browser evidence, and persistent state. |
+
+---
+
+### Verify your environment is perfectly configured:
+
+```
+python3 main.py vulnbank.org --doctor
+```
+
+### Ultimate, maximum-overdrive command
+
+```
+python3 main.py vulnbank.org \
+  --mode active \
+  --github-target Commando-X \
+  --git-min-score 60 \
+  --apk-url "https://github.com/juice-shop/juice-shop/releases/download/v17.1.1/juice-shop_17.1.1.apk" \
+  --ipa-url "https://example.com/target-app-release.ipa" \
+  --diff \
+  --no-screenshots
+```
+
+### The "Fast & Focused" Command
+
+```
+python3 main.py vulnbank.org \
+  --mode active \
+  --skip-git \
+  --apk-url "https://example.com/app.apk" \
+  --no-screenshots
+```
+
+*⚠️ **Disclaimer:** This tool is intended for educational purposes and authorized security testing only. The authors are
+not responsible for any misuse or damage caused by this program. Always ensure you have explicit, written permission
+before scanning active targets.*
