@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MEAT-GRINDER Report - $TARGET</title>
+<style>
+    @page {
+        size: A4;
+        margin: 2cm;
+        @top-right {
+            content: "MEAT-GRINDER • $TARGET";
+            font-size: 9pt;
+            color: #6b7280;
+        }
+        @bottom-center {
+            content: "Page " counter(page) " of " counter(pages);
+            font-size: 9pt;
+            color: #6b7280;
+        }
+    }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        color: #111827;
+        line-height: 1.5;
+        font-size: 11pt;
+    }
+    .cover {
+        text-align: center;
+        padding: 80px 0;
+        page-break-after: always;
+    }
+    .cover h1 {
+        font-size: 36pt;
+        color: #111827;
+        margin-bottom: 10px;
+    }
+    .cover .target {
+        font-size: 20pt;
+        color: #3b82f6;
+        margin: 20px 0;
+    }
+    .risk-badge {
+        display: inline-block;
+        padding: 20px 40px;
+        background: $RISK_COLOR;
+        color: white;
+        border-radius: 12px;
+        font-size: 18pt;
+        font-weight: bold;
+        margin: 30px 0;
+    }
+    .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 15px;
+        margin: 30px 0;
+    }
+    .metric {
+        background: #f9fafb;
+        padding: 20px;
+        border-radius: 8px;
+        text-align: center;
+        border: 1px solid #e5e7eb;
+    }
+    .metric .value {
+        font-size: 24pt;
+        font-weight: bold;
+        color: #111827;
+    }
+    .metric .label {
+        font-size: 9pt;
+        color: #6b7280;
+        text-transform: uppercase;
+        margin-top: 5px;
+    }
+    h1 { color: #111827; font-size: 20pt; margin-top: 30px; }
+    h2 { color: #374151; font-size: 14pt; margin-top: 25px; }
+    h3 { color: #4b5563; font-size: 12pt; }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 15px 0;
+        font-size: 10pt;
+    }
+    th {
+        background: #f3f4f6;
+        padding: 10px;
+        text-align: left;
+        border-bottom: 2px solid #d1d5db;
+    }
+    td {
+        padding: 8px 10px;
+        border-bottom: 1px solid #e5e7eb;
+    }
+    code {
+        background: #f3f4f6;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 0.9em;
+    }
+    .footer {
+        margin-top: 50px;
+        padding-top: 20px;
+        border-top: 1px solid #e5e7eb;
+        font-size: 9pt;
+        color: #6b7280;
+        text-align: center;
+    }
+</style>
+</head>
+<body>
+
+<!-- COVER PAGE -->
+<div class="cover">
+    <h1>🥩 MEAT-GRINDER</h1>
+    <div style="font-size: 14pt; color: #6b7280;">Attack Surface Reconnaissance Report</div>
+    <div class="target">$TARGET</div>
+    <div class="risk-badge">$RISK_EMOJI $RISK_LEVEL RISK • SCORE $RISK_SCORE/100</div>
+    <div style="margin-top: 40px; color: #6b7280;">
+        Generated: $GENERATED_AT<br>
+        AI Analysis: $AI_BACKEND_STATUS
+    </div>
+</div>
+
+<!-- EXECUTIVE SUMMARY -->
+<h1>📊 Executive Summary</h1>
+<p>This report presents the complete attack surface reconnaissance of <strong>$TARGET</strong>,
+performed using MEAT-GRINDER — a multi-vector OSINT engine enhanced with AI-powered analysis.
+The overall risk posture is assessed as <strong style="color: $RISK_COLOR;">$RISK_LEVEL</strong>
+with a risk score of <strong>$RISK_SCORE/100</strong>.</p>
+
+<div class="metric-grid">
+    <div class="metric">
+        <div class="value">$TOTAL_FINDINGS</div>
+        <div class="label">Total Findings</div>
+    </div>
+    <div class="metric">
+        <div class="value" style="color: #dc2626;">$CRITICAL_COUNT</div>
+        <div class="label">Critical</div>
+    </div>
+    <div class="metric">
+        <div class="value">$SUBDOMAIN_COUNT</div>
+        <div class="label">Subdomains</div>
+    </div>
+    <div class="metric">
+        <div class="value">$ENDPOINT_COUNT</div>
+        <div class="label">Live Endpoints</div>
+    </div>
+</div>
+
+<div class="metric-grid">
+    <div class="metric">
+        <div class="value">$PORT_COUNT</div>
+        <div class="label">Hosts w/ Open Ports</div>
+    </div>
+    <div class="metric">
+        <div class="value" style="color: #ea580c;">$HIGH_COUNT</div>
+        <div class="label">High Severity</div>
+    </div>
+    <div class="metric">
+        <div class="value" style="color: #7c3aed;">$ATTACK_PATH_COUNT</div>
+        <div class="label">AI Attack Paths</div>
+    </div>
+    <div class="metric">
+        <div class="value">$AI_GENERATED_COUNT</div>
+        <div class="label">AI-Generated</div>
+    </div>
+</div>
+
+<!-- VISUAL ANALYTICS -->
+<h1>📈 Visual Analytics</h1>
+$CHARTS_HTML
+
+<!-- ATTACK PATHS -->
+$ATTACK_PATHS_HTML
+
+<!-- INFRASTRUCTURE -->
+<h1>🏗️ Infrastructure Overview</h1>
+<h3>Hosts & Services</h3>
+<table>
+    <tr><th>Host</th><th>IP</th><th>OS</th><th>Open Ports</th></tr>
+    $PORTS_TABLE_ROWS
+</table>
+
+<h3>Web Servers</h3>
+<table>
+    <tr><th>Endpoint</th><th>Web Server</th><th>WAF</th></tr>
+    $WEB_SERVERS_TABLE_ROWS
+</table>
+
+<!-- DETAILED FINDINGS -->
+<h1>🔍 Detailed Findings</h1>
+$FINDINGS_HTML
+
+<!-- FOOTER -->
+<div class="footer">
+    <p><strong>MEAT-GRINDER</strong> • Modular Engine for Asset Tracking & Reconnaissance</p>
+    <p>This report is confidential and intended for authorized personnel only.</p>
+    <p>Generated on $GENERATED_AT • AI Analysis: $AI_BACKEND_STATUS</p>
+</div>
+
+</body>
+</html>

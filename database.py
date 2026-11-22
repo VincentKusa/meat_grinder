@@ -14,7 +14,11 @@ class DatabaseManager:
         self._migrate()
 
     def _get_conn(self):
-        return sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        conn.row_factory = sqlite3.Row
+        # Enable WAL mode for better concurrent write performance
+        conn.execute("PRAGMA journal_mode=WAL;")
+        return conn
 
     def _init_db(self):
         with self._get_conn() as conn:
@@ -26,7 +30,7 @@ class DatabaseManager:
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS endpoints (
                           id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT UNIQUE, status_code INTEGER,
-                          itle TEXT, tech_stack TEXT, content_length INTEGER, webserver TEXT,
+                          title TEXT, tech_stack TEXT, content_length INTEGER, webserver TEXT,
                           headers_json TEXT, waf_detected TEXT)"""
             )
 
@@ -61,41 +65,41 @@ class DatabaseManager:
 
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS dns_records (
-                                                                       id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                                                       domain TEXT,
-                                                                       record_type TEXT,
-                                                                       record_value TEXT,
-                                                                       ttl INTEGER,
-                                                                       UNIQUE(domain, record_type, record_value))"""
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       domain TEXT,
+                       record_type TEXT,
+                       record_value TEXT,
+                       ttl INTEGER,
+                       UNIQUE(domain, record_type, record_value))"""
             )
 
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS tls_info (
-                                                                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                                                    host TEXT UNIQUE,
-                                                                    issuer TEXT,
-                                                                    subject TEXT,
-                                                                    sans TEXT,
-                                                                    not_before TEXT,
-                                                                    not_after TEXT,
-                                                                    tls_versions TEXT,
-                                                                    cipher_suite TEXT)"""
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        host TEXT UNIQUE,
+                        issuer TEXT,
+                        subject TEXT,
+                        sans TEXT,
+                        not_before TEXT,
+                        not_after TEXT,
+                        tls_versions TEXT,
+                        cipher_suite TEXT)"""
             )
 
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS scan_runs (
-                                                                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                                                     target TEXT,
-                                                                     scan_mode TEXT,
-                                                                     started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                                                                     completed_at TIMESTAMP,
-                                                                     total_findings INTEGER)"""
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     target TEXT,
+                     scan_mode TEXT,
+                     started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                     completed_at TIMESTAMP,
+                     total_findings INTEGER)"""
             )
 
     def _migrate(self):
         with self._get_conn() as conn:
             try:
-                # Add new columns to findings table
+                # --- FINDINGS TABLE MIGRATIONS ---
                 cols = [row[1] for row in conn.execute("PRAGMA table_info(findings)").fetchall()]
                 if "confidence" not in cols:
                     conn.execute("ALTER TABLE findings ADD COLUMN confidence TEXT DEFAULT 'MEDIUM'")
@@ -110,45 +114,55 @@ class DatabaseManager:
                 if "source_module" not in cols:
                     conn.execute("ALTER TABLE findings ADD COLUMN source_module TEXT")
 
-                # Add new columns to endpoints table
+                # --- ENDPOINTS TABLE MIGRATIONS (FIXED) ---
                 cols_ep = [row[1] for row in conn.execute("PRAGMA table_info(endpoints)").fetchall()]
+                if "title" not in cols_ep:
+                    conn.execute("ALTER TABLE endpoints ADD COLUMN title TEXT")
+                if "tech_stack" not in cols_ep:
+                    conn.execute("ALTER TABLE endpoints ADD COLUMN tech_stack TEXT")
+                if "content_length" not in cols_ep:
+                    conn.execute("ALTER TABLE endpoints ADD COLUMN content_length INTEGER")
+                if "webserver" not in cols_ep:
+                    conn.execute("ALTER TABLE endpoints ADD COLUMN webserver TEXT")
                 if "headers_json" not in cols_ep:
                     conn.execute("ALTER TABLE endpoints ADD COLUMN headers_json TEXT")
                 if "waf_detected" not in cols_ep:
                     conn.execute("ALTER TABLE endpoints ADD COLUMN waf_detected TEXT")
 
-                # Add new columns to ports table
+                # --- PORTS TABLE MIGRATIONS ---
                 cols_ports = [row[1] for row in conn.execute("PRAGMA table_info(ports)").fetchall()]
                 if "os" not in cols_ports:
                     conn.execute("ALTER TABLE ports ADD COLUMN os TEXT")
                 if "services" not in cols_ports:
                     conn.execute("ALTER TABLE ports ADD COLUMN services TEXT")
 
-                # Create new tables
+                # --- CREATE NEW TABLES IF THEY DON'T EXIST ---
                 conn.execute(
                     """CREATE TABLE IF NOT EXISTS dns_records (
-                             id INTEGER PRIMARY KEY AUTOINCREMENT,
-                             domain TEXT, record_type TEXT, record_value TEXT, ttl INTEGER,
-                             UNIQUE(domain, record_type, record_value))"""
+                           id INTEGER PRIMARY KEY AUTOINCREMENT,
+                           domain TEXT, record_type TEXT, record_value TEXT, ttl INTEGER,
+                           UNIQUE(domain, record_type, record_value))"""
                 )
-
                 conn.execute(
                     """CREATE TABLE IF NOT EXISTS tls_info (
-                              id INTEGER PRIMARY KEY AUTOINCREMENT,
-                              host TEXT UNIQUE, issuer TEXT, subject TEXT, sans TEXT,
-                              not_before TEXT, not_after TEXT, tls_versions TEXT, cipher_suite TEXT)"""
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            host TEXT UNIQUE, issuer TEXT, subject TEXT, sans TEXT,
+                            not_before TEXT, not_after TEXT, tls_versions TEXT, cipher_suite TEXT)"""
                 )
-
                 conn.execute(
                     """CREATE TABLE IF NOT EXISTS scan_runs (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            target TEXT, scan_mode TEXT,
-                            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            completed_at TIMESTAMP, total_findings INTEGER)"""
+                         id INTEGER PRIMARY KEY AUTOINCREMENT,
+                         target TEXT, scan_mode TEXT,
+                         started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                         completed_at TIMESTAMP, total_findings INTEGER)"""
                 )
-
-            except sqlite3.OperationalError:
-                pass
+                cols = [row[1] for row in conn.execute("PRAGMA table_info(scan_runs)").fetchall()]
+                if "status" not in cols:
+                    conn.execute("ALTER TABLE scan_runs ADD COLUMN status TEXT DEFAULT 'COMPLETED'")
+                if "current_step" not in cols:
+                    conn.execute("ALTER TABLE scan_runs ADD COLUMN current_step TEXT DEFAULT 'START'")
+            except sqlite3.OperationalError as e:
+                print(f"[!] Migration warning: {e}")
 
     # ==========================================
     # SUBDOMAIN METHODS
@@ -325,3 +339,46 @@ class DatabaseManager:
                          """,
                 (target, scan_mode, total_findings),
             )
+
+    # ==========================================
+    # CHECKPOINT & RESUME METHODS
+    # ==========================================
+
+    def get_interrupted_scan(self, target: str):
+        """Check if there's an unfinished scan for this target."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """SELECT id, scan_mode, current_step FROM scan_runs
+                WHERE target = ? AND status IN ('RUNNING', 'INTERRUPTED')
+                ORDER BY started_at DESC LIMIT 1""",
+                (target,),
+            ).fetchone()
+            return row  # Returns (id, scan_mode, current_step) or None
+
+    def start_scan_run(self, target: str, mode: str) -> int:
+        """Create a new scan run record."""
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "INSERT INTO scan_runs (target, scan_mode, status, current_step) " "VALUES (?, ?, 'RUNNING', 'START')",
+                (target, mode),
+            )
+            return cursor.lastrowid
+
+    def update_scan_step(self, run_id: int, step: str):
+        """Update the current step of an ongoing scan."""
+        with self._get_conn() as conn:
+            conn.execute("UPDATE scan_runs SET current_step = ? WHERE id = ?", (step, run_id))
+
+    def complete_scan_run(self, run_id: int, total_findings: int):
+        """Mark a scan run as successfully completed."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE scan_runs SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP, "
+                "total_findings = ? WHERE id = ?",
+                (total_findings, run_id),
+            )
+
+    def mark_scan_interrupted(self, run_id: int):
+        """Mark a scan run as interrupted (for graceful shutdown)."""
+        with self._get_conn() as conn:
+            conn.execute("UPDATE scan_runs SET status = 'INTERRUPTED' WHERE id = ?", (run_id,))

@@ -71,6 +71,18 @@ class Config:
     REDACT_SECRETS = os.getenv("REDACT_SECRETS", "true").lower() == "true"
     SECRET_PREVIEW_LENGTH = int(os.getenv("SECRET_PREVIEW_LENGTH", "8"))
 
+    # ==========================================
+    # AI INTEGRATION
+    # ==========================================
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
+    OLLAMA_CODE_MODEL = os.getenv("OLLAMA_CODE_MODEL", "qwen2.5-coder:7b")
+
+    AI_ENABLED = os.getenv("AI_ENABLED", "true").lower() == "true"
+    AI_USE_LOCAL_FOR_SECRETS = os.getenv("AI_USE_LOCAL_FOR_SECRETS", "true").lower() == "true"
+    AI_USE_CLOUD_FOR_REASONING = os.getenv("AI_USE_CLOUD_FOR_REASONING", "true").lower() == "true"
+
     @classmethod
     def validate_binaries(cls) -> dict:
         """

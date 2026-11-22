@@ -122,7 +122,10 @@ class PasteMonitor(BaseReconModule):
 
         try:
             g = Github(Config.GITHUB_TOKEN)
-            query = f'author:@{self.target.split(".")[0]} OR committer:@{self.target.split(".")[0]}'
+
+            # FIX: Remove the '@' symbol. GitHub search qualifiers don't use it.
+            target_base = self.target.split(".")[0]
+            query = f"author:{target_base} OR committer:{target_base}"
 
             print("[*] Searching GitHub commits for target-related emails...")
             results = g.search_commits(query, sort="author-date", order="desc")
@@ -141,9 +144,8 @@ class PasteMonitor(BaseReconModule):
                             and "@" in email
                             and not email.endswith("@github.com")
                             and "noreply" not in email
-                            and self.target.split(".")[0].lower() in email.lower()
+                            and target_base.lower() in email.lower()
                         ):
-
                             if email not in emails_found:
                                 emails_found.add(email)
                                 self.db.insert_finding(
