@@ -1,14 +1,10 @@
-import json
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from database import DatabaseManager
-
 
 class MarkdownReporter:
-    def __init__(
-        self, db: DatabaseManager, target: str, workspace: Path, diff_mode: bool = False, last_scan: str = None
-    ):
+    def __init__(self, db, target: str, workspace: Path, diff_mode: bool = False, last_scan: str = None):
         self.db = db
         self.target = target
         self.workspace = workspace
@@ -16,137 +12,55 @@ class MarkdownReporter:
         self.last_scan = last_scan
 
     def generate(self):
-        # Fetch findings based on diff mode
-        if self.diff_mode and self.last_scan:
-            findings = self.db.get_new_findings_since(self.last_scan)
-        else:
-            findings = self.db.get_all_findings()
-
+        print("[*] Generating Markdown report...")
+        findings = self.db.get_all_findings()
         ports = self.db.get_all_ports()
         endpoints = self.db.get_all_endpoints()
+
+        # FIX: Better Diff Mode Summary
+        diff_header = ""
+        if self.diff_mode and self.last_scan:
+            critical_carried = len([f for f in findings if f["severity"] == "CRITICAL"])
+            diff_header = f"""
+## 🔄 Diff Mode Summary
+- **New Findings:** {len(findings)}
+- **Active Critical Risks (Carried over):** {critical_carried}
+- **Comparing against:** {self.last_scan}
+"""
+        else:
+            diff_header = "**Mode:** Standard Scan\n"
+
+        # FIX: Group Findings by Host for better developer actionability
+        findings_by_host = defaultdict(list)
+        for f in findings:
+            host = f["url"].split("/")[2] if "//" in f["url"] else "Unknown"
+            findings_by_host[host].append(f)
+
+        report = f"""# OSINT Insight Report: {self.target}
+            **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {diff_header}
+            ## Executive Summary
+            - **Actionable Findings:** {len(findings)}
+            - **Hosts with Open Ports:** {len(ports)}
+            - **Live HTTP Endpoints:** {len(endpoints)}
+
+            ---
+            ## Detailed Findings (Grouped by Host)
+            """
+        for host, host_findings in sorted(findings_by_host.items()):
+            report += f"\n### 🖥️ Host: `{host}`\n"
+            for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
+                sev_findings = [f for f in host_findings if f["severity"] == sev]
+                if sev_findings:
+                    report += f"\n#### {sev} Severity ({len(sev_findings)})\n"
+                    for f in sev_findings:
+                        report += f"- **[{f['finding_type']}]** `{f['url']}`\n"
+                        report += f"  - *Details:* {f['details']}\n"
+                        if f.get("confidence"):
+                            report += f"  - *Confidence:* {f['confidence']}\n"
+
+        # Write to file
         report_path = self.workspace / f"REPORT_{self.target}.md"
-
-        with open(report_path, "w", encoding="utf-8") as f:
-            f.write(f"# OSINT Insight Report: {self.target}\n")
-            f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-
-            if self.diff_mode and self.last_scan:
-                f.write(f"**Mode:** Diff (New findings since {self.last_scan})\n")
-            f.write("\n")
-
-            f.write("## Executive Summary\n")
-            f.write(f"- **Actionable Findings:** {len(findings)}\n")
-            f.write(f"- **Hosts with Open Ports:** {len(ports)}\n")
-            f.write(f"- **Live HTTP Endpoints:** {len(endpoints)}\n\n")
-
-            # ============ WAF & SECURITY POSTURE ============
-            waf_endpoints = [ep for ep in endpoints if ep.get("waf_detected") and ep["waf_detected"] != "None"]
-            if waf_endpoints:
-                f.write("## 🛡️ WAF & Firewall Detection\n\n")
-                f.write("| Endpoint | Detected WAF/Firewall |\n")
-                f.write("|---|---|\n")
-                for ep in waf_endpoints:
-                    f.write(f"| `{ep['url']}` | **{ep['waf_detected']}** |\n")
-                f.write("\n")
-
-            # ============ INFRASTRUCTURE INVENTORY ============
-            if ports:
-                f.write("## Infrastructure Inventory\n\n")
-                f.write("### Hosts, OS & Services\n\n")
-                f.write("| Host | IP | OS | Open Ports | Running Services |\n")
-                f.write("|---|---|---|---|---|\n")
-                for p in ports:
-                    os_info = p.get("os", "") or "Unknown"
-                    try:
-                        services = json.loads(p.get("services", "{}") or "{}")
-                    except json.JSONDecodeError:
-                        services = {}
-                    svc_list = [f"{port}({name})" for port, name in services.items() if port != "cpe"]
-                    svc_str = ", ".join(svc_list) if svc_list else "-"
-                    f.write(f"| `{p['host']}` | {p['ip']} | {os_info} | {p['ports']} | {svc_str} |\n")
-                f.write("\n")
-
-            # ============ WEBSERVER INVENTORY ============
-            webservers = {}
-            for ep in endpoints:
-                ws = ep.get("webserver", "")
-                if ws:
-                    webservers[ws] = webservers.get(ws, 0) + 1
-
-            if webservers:
-                f.write("### Web Servers Detected\n\n")
-                f.write("| Web Server | Count |\n")
-                f.write("|---|---|\n")
-                for ws, count in sorted(webservers.items(), key=lambda x: -x[1]):
-                    f.write(f"| `{ws}` | {count} |\n")
-                f.write("\n")
-
-            # ============ OS RECONNAISSANCE ============
-            os_data = self.db.get_all_os_recon()
-            if os_data:
-                f.write("## 🖥️ Deep OS & Service Fingerprinting\n\n")
-                f.write("| Host | IP | Detected OS (Accuracy) | Hostname | Open Ports & Versions |\n")
-                f.write("|---|---|---|---|---|\n")
-                for os_info in os_data:
-                    os_display = (
-                        f"{os_info['os_name']} ({os_info['os_accuracy']}%)"
-                        if os_info["os_name"] != "Unknown"
-                        else "Unknown"
-                    )
-                    f.write(
-                        f"| `{os_info['host']}` | {os_info['ip']} | {os_display} | {os_info['hostname']} "
-                        f"| {os_info['open_ports']} |\n"
-                    )
-                f.write("\n")
-
-            # ============ HUMAN INTELLIGENCE (WHOIS/CONTACTS) ============
-            human_findings = [
-                fd
-                for fd in findings
-                if fd["finding_type"] in ["SOCIAL_MEDIA_CONTACT", "WHOIS_CONTACT_EMAIL", "DOMAIN_WHOIS_INFO"]
-            ]
-            if human_findings:
-                f.write("## 👤 Human Intelligence & Contact OSINT\n\n")
-                for fd in human_findings:
-                    f.write(f"- **[{fd['finding_type']}]** `{fd['url']}`\n")
-                    f.write(f"  - *Details:* {fd['details']}\n\n")
-                f.write("---\n\n")
-
-            # ============ DETAILED FINDINGS ============
-            if not findings:
-                f.write("## Detailed Findings\n\n")
-                f.write("*No high-value insights found.*\n")
-            else:
-                f.write("## Detailed Findings\n\n")
-                for severity in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
-                    sev_findings = [fd for fd in findings if fd["severity"] == severity]
-                    if sev_findings:
-                        f.write(f"### {severity} Severity ({len(sev_findings)})\n\n")
-                        for fd in sev_findings:
-                            f.write(f"- **[{fd['finding_type']}]** `{fd['url']}`\n")
-                            f.write(f"  - *Details:* {fd['details']}\n")
-
-                            # Add new deduplication/tracking fields if they exist
-                            if fd.get("occurrences", 1) > 1:
-                                f.write(f"  - *Occurrences:* {fd['occurrences']}\n")
-                            if fd.get("confidence"):
-                                f.write(f"  - *Confidence:* {fd['confidence']}\n")
-                            if fd.get("first_seen"):
-                                f.write(f"  - *First Seen:* {fd['first_seen']}\n")
-                            if fd.get("last_seen"):
-                                f.write(f"  - *Last Seen:* {fd['last_seen']}\n")
-                            f.write("\n")
-
-            # ============ VISUAL PROOF (SCREENSHOTS) ============
-            screenshot_dir = self.workspace / "screenshots"
-            if screenshot_dir.exists() and any(screenshot_dir.iterdir()):
-                f.write("## 📸 Visual Proof (Screenshots)\n\n")
-                f.write("The following screenshots were captured for HIGH/CRITICAL findings:\n\n")
-
-                screenshots = list(screenshot_dir.glob("*.png"))
-                for i, img_path in enumerate(screenshots[:10]):  # Limit to 10 to avoid massive reports
-                    rel_path = f"screenshots/{img_path.name}"
-                    f.write(f"### Finding {i + 1}\n")
-                    f.write(f"![Screenshot {i + 1}]({rel_path})\n\n")
+        with open(report_path, "w", encoding="utf-8") as file:
+            file.write(report)
 
         print(f"[+] Report generated: {report_path}")

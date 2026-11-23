@@ -1,5 +1,3 @@
-"""AI-powered analysis: adds business impact + remediation to findings."""
-
 from engine.ai_engine import AIEngine
 from engine.base import BaseReconModule
 
@@ -17,44 +15,45 @@ class AIAnalyzer(BaseReconModule):
         print("[*] 🧠 AI Analyzer: Enhancing findings with context...")
 
         findings = self.db.get_all_findings()
-        high_value = [f for f in findings if f["severity"] in ["CRITICAL", "HIGH"]]
+
+        # FIX: Strict AI Gating - Only CRITICAL/HIGH, capped at 20 max
+        high_value = [
+            f
+            for f in findings
+            if f["severity"] in ["CRITICAL", "HIGH"] and f.get("confidence") in ["CONFIRMED", "HIGH"]
+        ][:20]
 
         if not high_value:
-            print("[*] No high-severity findings to analyze.")
+            print("[*] No high-value findings to analyze. Skipping AI step.")
             return
 
-        print(f"[*] 🧠 Analyzing {len(high_value)} findings with AI...")
+        print(f"[*] 🧠 Analyzing top {len(high_value)} findings with AI...")
 
         analyzed = 0
         for finding in high_value:
             if "[AI Analysis]" in finding.get("details", ""):
                 continue
 
-            insight = self._analyze_finding(finding)
-            if insight:
-                new_details = f"{finding['details']}\n\n[AI Analysis]\n{insight}"
-                self._update_finding(finding["id"], new_details)
+            # Redact secrets before sending to cloud AI
+            safe_details = self.ai.redact_secrets(finding["details"])
+
+            prompt = f"""You are an expert application security engineer.
+
+                Finding Type: {finding['finding_type']}
+                Target: {finding['url']}
+                Context: {safe_details}
+
+                Provide EXACTLY two lines:
+                Business Impact: [one sentence]
+                Remediation: [one sentence]"""
+
+            response = self.ai.ask(prompt, sensitive=True, max_tokens=200)
+
+            if response:
+                new_details = f"{finding['details']}\n\n[AI Analysis]\n{response}"
+                # Update the finding in the database (adjust method name if your DB class uses a different one)
+                with self.db._get_conn() as conn:
+                    conn.execute("UPDATE findings SET details = ? WHERE id = ?", (new_details, finding["id"]))
                 analyzed += 1
 
         print(f"[+] 🧠 AI analysis complete. Enhanced {analyzed} findings.")
-
-    def _analyze_finding(self, finding: dict) -> str:
-        """Use local AI to analyze a finding (secrets stay private)."""
-        safe_details = self.ai.redact_secrets(finding["details"])
-
-        prompt = f"""You are an expert application security engineer. Analyze this finding.
-
-            Finding Type: {finding['finding_type']}
-            Target: {finding['url']}
-            Context: {safe_details}
-
-            Provide EXACTLY two lines, no markdown, no bullets:
-            Business Impact: [one sentence on real-world risk]
-            Remediation: [one sentence on how to fix it]"""
-
-        response = self.ai.ask(prompt, sensitive=True, max_tokens=200)
-        return response if response else ""
-
-    def _update_finding(self, finding_id: int, new_details: str):
-        with self.db._get_conn() as conn:
-            conn.execute("UPDATE findings SET details = ? WHERE id = ?", (new_details, finding_id))

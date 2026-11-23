@@ -1,134 +1,114 @@
-import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse
+import random
+import string
 
 import requests
 import urllib3
 
+from database import ConfidenceLevel
 from engine.base import BaseReconModule
 
-# Suppress SSL warnings for self-signed certs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class SensitiveFileScanner(BaseReconModule):
-    # Common sensitive files to hunt for
-    SENSITIVE_FILES = [
-        ".env",
-        ".env.bak",
-        ".env.local",
-        ".env.production",
-        ".env.example",
-        ".git/config",
-        ".git/HEAD",
-        ".gitignore",
-        "wp-config.php",
-        "wp-config.php.bak",
-        "wp-config.php.save",
-        "config.php",
-        "config.php.bak",
-        "config.php.old",
-        "config.json",
-        "config.yaml",
-        "config.yml",
-        "database.yml",
-        "database.json",
-        "database.php",
-        "secrets.json",
-        "credentials.json",
-        ".aws/credentials",
-        "id_rsa",
-        "id_dsa",
-        "id_ecdsa",
-        "id_ed25519",
-        ".htpasswd",
-        ".htaccess",
-        "backup.sql",
-        "dump.sql",
-        "db.sql",
-        "db_backup.sql",
-    ]
+    def __init__(self, target: str, db, workspace):
+        super().__init__(target, db, workspace)
+        self.files_to_check = [
+            ".env",
+            ".env.bak",
+            ".env.local",
+            ".env.production",
+            ".git/config",
+            ".git/HEAD",
+            "wp-config.php",
+            "config.php",
+            "database.yml",
+            "secrets.json",
+            "credentials.json",
+            ".aws/credentials",
+            "id_rsa",
+            "id_dsa",
+            ".htpasswd",
+            "backup.sql",
+            "dump.sql",
+            "db.sql",
+        ]
 
-    # Regex patterns that strongly indicate a REAL secret file (filters out fake 200 OK pages)
-    SECRET_PATTERNS = [
-        re.compile(
-            r"(?i)(DB_PASSWORD|DB_USER|DB_HOST|DATABASE_URL|SECRET_KEY|JWT_SECRET|API_KEY|PASSWORD)"
-            r'\s*[:=]\s*[\'"]?[^\'"\s]+[\'"]?'
-        ),
-        re.compile(r"(?i)-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----"),
-        re.compile(r"(?i)aws_access_key_id|aws_secret_access_key"),
-        re.compile(r"(?i)STRIPE_SECRET_KEY|STRIPE_API_KEY"),
-    ]
+    def _get_baseline_404_length(self, base_url: str) -> int:
+        """Get the length of a custom 404 page to filter fake positives."""
+        try:
+            random_path = "".join(random.choices(string.ascii_lowercase, k=16))
+            resp = requests.get(f"{base_url}/{random_path}", timeout=10, verify=False)
+            return len(resp.text)
+        except Exception:
+            return 0
 
     def execute(self):
-        print("[*] Scanning for exposed sensitive files (.env, .git, configs)...")
+        print("[*] Scanning for exposed sensitive files...")
         endpoints = self.db.get_all_endpoints()
+        base_urls = list(
+            set([f"{ep['url'].split('://')[0]}://{ep['url'].split('://')[1].split('/')[0]}" for ep in endpoints])
+        )
 
-        # Extract unique base URLs to avoid redundant scanning (e.g., https://example.com/)
-        base_urls = set()
-        for ep in endpoints:
-            parsed = urlparse(ep["url"])
-            base_url = f"{parsed.scheme}://{parsed.netloc}/"
-            base_urls.add(base_url)
+        print(f"[*] Checking {len(self.files_to_check)} file types across {len(base_urls)} base URLs...")
+        findings_count = 0
 
-        print(f"[*] Checking {len(self.SENSITIVE_FILES)} file types across {len(base_urls)} base URLs...")
+        # FIX: Calculate baseline per base URL
+        baselines = {}
+        for base_url in base_urls:
+            baselines[base_url] = self._get_baseline_404_length(base_url)
+            if baselines[base_url] > 0:
+                print(f"  [*] Baseline 404 length for {base_url}: {baselines[base_url]} bytes")
 
-        found_count = 0
-        with ThreadPoolExecutor(max_workers=50) as executor:
-            futures = {}
-            for base_url in base_urls:
-                for file_path in self.SENSITIVE_FILES:
-                    target_url = f"{base_url.rstrip('/')}/{file_path.lstrip('/')}"
-                    futures[executor.submit(self._check_file, target_url)] = target_url
+        for base_url in base_urls:
+            baseline_404_len = baselines[base_url]
 
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    found_count += 1
+            for file_path in self.files_to_check:
+                url = f"{base_url.rstrip('/')}/{file_path.lstrip('/')}"
+                try:
+                    resp = requests.get(url, timeout=10, verify=False)
 
-        print(f"[+] Found {found_count} validated exposed sensitive files.")
+                    # FIX: Ignore fake 404s (custom error pages returning 200 with static length)
+                    if resp.status_code == 200 and baseline_404_len > 0:
+                        # Allow 10% variance in content length
+                        variance = abs(len(resp.text) - baseline_404_len) / baseline_404_len
+                        if variance < 0.10:
+                            continue
 
-    def _check_file(self, url: str) -> bool:
-        try:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            # We only need the first 2KB to validate if it's a real config file
-            resp = requests.get(url, headers=headers, timeout=5, verify=False)
+                    if resp.status_code == 200:
+                        text = resp.text[:2000]
+                        if any(
+                            pattern in text
+                            for pattern in ["DB_PASSWORD", "SECRET_KEY", "PRIVATE KEY", "aws_access_key", "STRIPE"]
+                        ):
+                            self.db.insert_finding(
+                                f_type="EXPOSED_SENSITIVE_FILE",
+                                url=url,
+                                details="Status: 200, Regex matched potential secrets/config data",
+                                severity="CRITICAL",
+                                confidence=ConfidenceLevel.CONFIRMED,
+                                source_module="sensitive_file_scanner",
+                            )
+                            findings_count += 1
+                        else:
+                            self.db.insert_finding(
+                                f_type="EXPOSED_FILE",
+                                url=url,
+                                details=f"Status: 200, Content Length: {len(resp.text)} bytes (No obvious secrets)",
+                                severity="MEDIUM",
+                                confidence=ConfidenceLevel.MEDIUM,
+                                source_module="sensitive_file_scanner",
+                            )
+                    elif resp.status_code == 403 and ".git" in file_path:
+                        self.db.insert_finding(
+                            f_type="PROTECTED_SENSITIVE_FILE",
+                            url=url,
+                            details="Status: 403 (File/Directory exists but access forbidden)",
+                            severity="MEDIUM",
+                            confidence=ConfidenceLevel.MEDIUM,
+                            source_module="sensitive_file_scanner",
+                        )
+                except Exception:
+                    pass
 
-            if resp.status_code == 200:
-                content = resp.text[:2048]  # Read first 2KB to save bandwidth
-
-                # Validate: Does this actually look like a secret file?
-                is_sensitive = any(pattern.search(content) for pattern in self.SECRET_PATTERNS)
-
-                if is_sensitive:
-                    self.db.insert_finding(
-                        "EXPOSED_SENSITIVE_FILE",
-                        url,
-                        "Status: 200, Regex matched potential secrets/config data",
-                        "CRITICAL",
-                    )
-                    return True
-                elif len(content.strip()) > 50:
-                    # It's a 200 OK with content, but no obvious regex match. Flag as medium for manual review.
-                    self.db.insert_finding(
-                        "EXPOSED_FILE",
-                        url,
-                        f"Status: 200, Content Length: {len(content)} bytes (No obvious secrets)",
-                        "MEDIUM",
-                    )
-                    return True
-
-            elif resp.status_code == 403 and ".git" in url:
-                # 403 on .git/ is still a finding (directory exists but is protected)
-                self.db.insert_finding(
-                    "PROTECTED_SENSITIVE_FILE",
-                    url,
-                    "Status: 403 (File/Directory exists but access forbidden)",
-                    "MEDIUM",
-                )
-                return True
-
-        except requests.exceptions.RequestException:
-            pass  # Ignore timeouts, connection errors, etc.
-
-        return False
+        print(f"[+] Found {findings_count} validated exposed sensitive files.")

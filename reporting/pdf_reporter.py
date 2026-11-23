@@ -142,9 +142,8 @@ class PDFReporter:
     # ==========================================
     # HTML RENDERERS
     # ==========================================
-
     def _render_findings(self, findings: list) -> str:
-        """Render findings grouped by severity."""
+        """Render findings grouped by severity, capped to prevent massive reports."""
         colors = {
             "CRITICAL": "#dc2626",
             "HIGH": "#ea580c",
@@ -153,13 +152,22 @@ class PDFReporter:
             "INFO": "#2563eb",
         }
         html = ""
+
+        # Get the limit from config (defaults to 25 if not set)
+        max_findings = getattr(self.config, "MAX_FINDINGS_PER_SEVERITY", 25)
+
         for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
             sev_findings = [f for f in findings if f["severity"] == sev]
             if not sev_findings:
                 continue
+
+            total_count = len(sev_findings)
+            displayed_findings = sev_findings[:max_findings]
+
             color = colors[sev]
-            html += f'<h2 style="color: {color}; border-bottom: 2px solid {color};">{sev} ({len(sev_findings)})</h2>'
-            for f in sev_findings:
+            html += f'<h2 style="color: {color}; border-bottom: 2px solid {color};">{sev} ({total_count})</h2>'
+
+            for f in displayed_findings:
                 details = self._escape_html(f["details"]).replace("\n", "<br>")
                 url = self._escape_html(f["url"])
                 ftype = self._escape_html(f["finding_type"])
@@ -172,6 +180,16 @@ class PDFReporter:
                     <div style="margin-top: 6px; color: #374151; font-size: 0.95em;">{details}</div>
                 </div>
                 """
+
+            # Add a note if findings were omitted
+            if total_count > max_findings:
+                omitted = total_count - max_findings
+                html += (
+                    f'<p style="color: #6b7280; font-style: italic; text-align: center; margin-top: 15px;">... '
+                    f"and {omitted} more {sev.lower()} findings omitted for brevity. Check the Markdown report "
+                    f"for the complete list.</p>"
+                )
+
         return html or "<p><em>No findings to display.</em></p>"
 
     def _render_attack_paths(self, findings: list) -> str:

@@ -70,6 +70,7 @@ class Config:
     # ==========================================
     REDACT_SECRETS = os.getenv("REDACT_SECRETS", "true").lower() == "true"
     SECRET_PREVIEW_LENGTH = int(os.getenv("SECRET_PREVIEW_LENGTH", "8"))
+    MAX_FINDINGS_PER_SEVERITY = int(os.getenv("MAX_FINDINGS_PER_SEVERITY", "25"))
 
     # ==========================================
     # AI INTEGRATION

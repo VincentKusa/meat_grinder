@@ -1,150 +1,87 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urljoin
-
 import requests
 import urllib3
 
+from database import ConfidenceLevel
 from engine.base import BaseReconModule
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class AdminDiscovery(BaseReconModule):
-    # Common admin paths to check
-    ADMIN_PATHS = [
-        "/admin",
-        "/administrator",
-        "/admin.php",
-        "/admin/login",
-        "/admin/dashboard",
-        "/wp-admin",
-        "/wp-login.php",
-        "/phpmyadmin",
-        "/pma",
-        "/mysql",
-        "/adminer",
-        "/cpanel",
-        "/dashboard",
-        "/manage",
-        "/management",
-        "/console",
-        "/portal",
-        "/backend",
-        "/controlpanel",
-        "/manager",
-        "/supervisor",
-        "/jenkins",
-        "/grafana",
-        "/kibana",
-        "/elastic",
-        "/api/admin",
-        "/api/management",
-        "/swagger-ui.html",
-        "/api-docs",
-        "/.env",
-        "/.git/config",
-        "/server-status",
-        "/server-info",
-        "/info.php",
-        "/phpinfo.php",
-    ]
+    def __init__(self, target: str, db, workspace):
+        super().__init__(target, db, workspace)
+        self.admin_paths = {
+            "wordpress": ["/wp-admin", "/wp-login.php"],
+            "jenkins": ["/jenkins", "/admin/login", "/dashboard"],
+            "phpmyadmin": ["/phpmyadmin", "/pma", "/mysql"],
+            "grafana": ["/grafana", "/login"],
+            "cpanel": ["/cpanel", "/webmail", "/whm"],
+            "django": ["/admin", "/administrator", "/admin.php"],
+        }
 
-    # Admin panel fingerprints
-    ADMIN_FINGERPRINTS = {
-        "WordPress": ["wp-admin", "wp-login", "wordpress"],
-        "Joomla": ["joomla", "administrator/index.php"],
-        "Drupal": ["drupal", "user/login"],
-        "Jenkins": ["jenkins", "dashboard", "login"],
-        "Grafana": ["grafana", "grafana-login"],
-        "Kibana": ["kibana", "elastic"],
-        "phpMyAdmin": ["phpmyadmin", "pma", "mysql"],
-        "cPanel": ["cpanel", "whm"],
-        "Django Admin": ["django", "admin"],
-        "Laravel": ["laravel"],
-    }
+        self.valid_fingerprints = {
+            "jenkins": ["jenkins", "jenkins-agent-protocols"],
+            "wordpress": ["wp-admin", "wp-login.php", "wordpress"],
+            "phpmyadmin": ["phpmyadmin", "pma_", "mysql"],
+            "grafana": ["grafana"],
+            "cpanel": ["cpanel", "whm", "webmail"],
+            "django": ["django administration", "admin"],
+        }
 
     def execute(self):
         print("[*] Discovering admin panels and management interfaces...")
-
         endpoints = self.db.get_all_endpoints()
-        base_urls = set()
+        base_urls = list(
+            set([f"{ep['url'].split('://')[0]}://{ep['url'].split('://')[1].split('/')[0]}" for ep in endpoints])
+        )
 
-        for ep in endpoints:
-            if ep["status_code"] in [200, 301, 302]:
-                # Extract base URL
-                from urllib.parse import urlparse
-
-                parsed = urlparse(ep["url"])
-                base_url = f"{parsed.scheme}://{parsed.netloc}"
-                base_urls.add(base_url)
-
-        print(f"[*] Checking {len(self.ADMIN_PATHS)} admin paths across {len(base_urls)} base URLs...")
-
+        print(
+            f"[*] Checking {sum(len(paths) for paths in self.admin_paths.values())} "
+            f"admin paths across {len(base_urls)} base URLs..."
+        )
         findings_count = 0
-        with ThreadPoolExecutor(max_workers=30) as executor:
-            futures = {}
+        seen_panels = set()  # FIX: Track unique panels to prevent duplicates
 
-            for base_url in base_urls:
-                for path in self.ADMIN_PATHS:
-                    target_url = urljoin(base_url + "/", path.lstrip("/"))
-                    futures[executor.submit(self._check_admin_path, target_url)] = target_url
+        for base_url in base_urls:
+            for panel_name, paths in self.admin_paths.items():
+                for path in paths:
+                    url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
 
-            for future in as_completed(futures):
-                if future.result():
-                    findings_count += 1
+                    # FIX: Skip if we've already found this exact panel
+                    panel_key = f"{base_url}|{panel_name}|{path}"
+                    if panel_key in seen_panels:
+                        continue
 
-        print(f"[+] Admin discovery complete. Found {findings_count} insights.")
+                    try:
+                        resp = requests.get(url, timeout=10, verify=False, allow_redirects=False)
 
-    def _check_admin_path(self, url: str) -> bool:
-        """Check if an admin path exists and is accessible"""
-        try:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            resp = requests.get(url, headers=headers, timeout=5, verify=False, allow_redirects=True)
+                        if resp.status_code in [200, 401, 403]:
+                            is_valid = False
+                            if panel_name in self.valid_fingerprints:
+                                text_lower = resp.text.lower()
+                                if any(fp in text_lower for fp in self.valid_fingerprints[panel_name]):
+                                    is_valid = True
 
-            # Check for accessible admin panels
-            if resp.status_code == 200:
-                content = resp.text.lower()
+                            # Only flag if fingerprint matches OR it's a protected panel
+                            if resp.status_code in [401, 403] or is_valid:
+                                seen_panels.add(panel_key)  # Mark as seen
 
-                # Fingerprint the admin panel
-                detected_panel = None
-                for panel, keywords in self.ADMIN_FINGERPRINTS.items():
-                    if any(kw in content for kw in keywords):
-                        detected_panel = panel
-                        break
+                                severity = "MEDIUM" if resp.status_code == 200 else "INFO"
+                                f_type = (
+                                    "ADMIN_PANEL_DISCOVERED" if resp.status_code == 200 else "ADMIN_PANEL_PROTECTED"
+                                )
 
-                if detected_panel:
-                    self.db.insert_finding(
-                        f_type="ADMIN_PANEL_DISCOVERED",
-                        url=url,
-                        details=f"{detected_panel} admin panel accessible",
-                        severity="MEDIUM",
-                        source_module="admin_discovery",
-                    )
-                    return True
+                                self.db.insert_finding(
+                                    f_type=f_type,
+                                    url=url,
+                                    details=f"{panel_name.capitalize()} admin panel accessible "
+                                    f"(HTTP {resp.status_code})",
+                                    severity=severity,
+                                    confidence=ConfidenceLevel.HIGH if is_valid else ConfidenceLevel.MEDIUM,
+                                    source_module="admin_discovery",
+                                )
+                                findings_count += 1
+                    except Exception:
+                        pass
 
-                # Generic admin panel (no specific fingerprint)
-                if any(kw in content for kw in ["login", "sign in", "username", "password", "admin"]):
-                    self.db.insert_finding(
-                        f_type="ADMIN_PANEL_DISCOVERED",
-                        url=url,
-                        details="Admin/login panel accessible (unidentified)",
-                        severity="MEDIUM",
-                        source_module="admin_discovery",
-                    )
-                    return True
-
-            # Check for protected but existing admin panels
-            elif resp.status_code in [401, 403, 407]:
-                self.db.insert_finding(
-                    f_type="ADMIN_PANEL_PROTECTED",
-                    url=url,
-                    details=f"Admin panel exists but requires authentication (HTTP {resp.status_code})",
-                    severity="INFO",
-                    source_module="admin_discovery",
-                )
-                return True
-
-        except Exception:
-            pass
-
-        return False
+        print(f"[+] Admin discovery complete. Found {findings_count} unique insights.")

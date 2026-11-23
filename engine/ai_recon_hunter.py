@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 import requests
 import urllib3
 
+from database import ConfidenceLevel
 from engine.ai_engine import AIEngine
 from engine.base import BaseReconModule
 
@@ -172,7 +173,6 @@ class AIReconHunter(BaseReconModule):
     # ==========================================
     # PHASE 3: ATTACK PATH CHAINING
     # ==========================================
-
     def _chain_attack_paths(self, context: dict):
         """AI chains existing findings into realistic attack narratives."""
         if not context["findings_summary"]:
@@ -180,19 +180,20 @@ class AIReconHunter(BaseReconModule):
 
         print("[*] 🧠 AI: Chaining findings into attack paths...")
 
-        findings_text = "\n".join(f"- {f}" for f in context["findings_summary"])
+        findings_text = "\n".join(f"- {f}" for f in context["findings_summary"][:30])  # Limit to top 30
 
-        prompt = f"""You are a red team lead. Chain these findings into
-            realistic attack paths against {context['target']}.
+        prompt = f"""You are a red team lead performing a penetration test.
 
-            FINDINGS:
+            TARGET: {context['target']}
+            TECH STACK: {', '.join(context['tech_stack']) or 'Unknown'}
+            DISCOVERED FINDINGS:
             {findings_text}
 
-            Generate 3 attack paths. For each:
-            - name: Short path name
-            - steps: Array of 2-4 concrete steps
-            - impact: Final business impact
-            - difficulty: Easy/Medium/Hard
+            Based on these SPECIFIC findings, generate 3 realistic attack paths. Each path must:
+            1. Use ONLY the findings listed above as starting points
+            2. Include 2-4 concrete, actionable steps
+            3. Reference specific URLs or services discovered
+            4. Explain the business impact
 
             Return as JSON array with keys: name, steps (array), impact, difficulty"""
 
@@ -208,11 +209,10 @@ class AIReconHunter(BaseReconModule):
 
                 self.db.insert_finding(
                     f_type="AI_ATTACK_PATH",
-                    url=(f"attack://{context['target']}/" f"{path.get('name', 'chain').replace(' ', '_').lower()}"),
-                    details=(
-                        f"{path.get('name')} [{difficulty}]: {steps_str} | " f"Final Impact: {path.get('impact')}"
-                    ),
+                    url=f"attack://{context['target']}/{path.get('name', 'chain').replace(' ', '_').lower()}",
+                    details=f"{path.get('name')} [{difficulty}]: {steps_str} | Final Impact: {path.get('impact')}",
                     severity=severity,
+                    confidence=ConfidenceLevel.MEDIUM,
                     source_module="ai_recon_hunter",
                 )
             print(f"[+] 🧠 AI identified {len(paths)} attack paths")

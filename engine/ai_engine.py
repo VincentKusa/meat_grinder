@@ -87,24 +87,29 @@ class AIEngine:
         if not self.gemini_client:
             return self.ask_local(prompt, max_tokens)
 
-        try:
-            # Using stable gemini-1.5-flash to avoid 404 errors with experimental models
-            response = self.gemini_client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=max_tokens),
-            )
-            return response.text.strip()
-        except Exception as e:
-            # Log the exception with full traceback for debugging
-            logger.error(f"Gemini query failed for prompt: {prompt[:50]}...")
-            logger.exception("Full Gemini API Exception Traceback:")
+        # Try the most stable, widely available models in order
+        models_to_try = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
 
-            # Also print a user-friendly fallback message to the console
-            print(f"[!] Gemini query failed: {type(e).__name__}: {e}")
-            print("    ↳ Falling back to local Ollama...")
+        for model_name in models_to_try:
+            try:
+                response = self.gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=max_tokens),
+                )
+                return response.text.strip()
 
-            return self.ask_local(prompt, max_tokens)
+            except Exception as e:
+                # If it's a 404/Not Found, try the next model in the list
+                if "NOT_FOUND" in str(e) or "404" in str(e):
+                    continue
+                else:
+                    # If it's a different error (e.g., rate limit, invalid key), log and break
+                    logger.error(f"Gemini query failed with {model_name}: {e}")
+                    break
+
+        logger.error("All Gemini models failed. Falling back to local Ollama.")
+        return self.ask_local(prompt, max_tokens)
 
     def ask_json(self, prompt: str, sensitive: bool = False, max_tokens: int = 1000) -> Any:
         """Ask AI and parse response as JSON. Returns dict, list, or None."""

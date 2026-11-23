@@ -16,6 +16,7 @@ from engine.browser_evidence import BrowserEvidence
 from engine.cloud_scanner import CloudScanner
 from engine.dns_scanner import DNSScanner
 from engine.email_osint import EmailOSINT
+from engine.ftp_anonymous_checker import FTPAnonymousChecker
 from engine.git_scanner import GitScanner
 from engine.header_analyzer import HeaderAnalyzer
 from engine.html_metadata_extractor import HTMLMetadataExtractor
@@ -183,6 +184,7 @@ def main():
         [
             ("NucleiScanner", lambda: NucleiScanner(target, db, workspace).execute()),
             ("CloudScanner", lambda: CloudScanner(target, db, workspace).execute()),
+            ("FTPAnonymousChecker", lambda: FTPAnonymousChecker(target, db, workspace).execute()),
         ],
         # Wave 8: Mobile (Optional, independent)
         [

@@ -382,3 +382,9 @@ class DatabaseManager:
         """Mark a scan run as interrupted (for graceful shutdown)."""
         with self._get_conn() as conn:
             conn.execute("UPDATE scan_runs SET status = 'INTERRUPTED' WHERE id = ?", (run_id,))
+
+    def get_findings_by_type(self, finding_type: str) -> list:
+        """Get all findings of a specific type."""
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT * FROM findings WHERE finding_type = ?", (finding_type,)).fetchall()
+            return [dict(row) for row in rows]
